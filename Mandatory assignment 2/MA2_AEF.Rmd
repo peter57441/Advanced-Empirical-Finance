@@ -1,0 +1,268 @@
+---
+title: "Mandatory Assignment 1 AEF"
+author: 'ncx951 & dsc579'
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: no
+  html_document:
+    theme: readable
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+header-includes:
+- \usepackage{graphicx}
+- \usepackage{float}
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	fig.align = "center",
+	fig.path = "figure/graphics-",
+	fig.pos = "H",
+	message = FALSE,
+	warning = FALSE,
+	cache = TRUE,
+	cache.path = "cache/graphics-",
+	external = TRUE
+)
+rm(list = ls())
+
+library(knitr)
+  opts_chunk$set(fig.path='figure/graphics-', 
+                 cache.path='cache/graphics-', 
+                 fig.align='center',
+                 external=TRUE,
+                 echo=TRUE,
+                 warning=FALSE,
+                 fig.pos='H'
+                )
+  a4width<- 8.3
+  a4height<- 11.7
+```
+
+```{r include=FALSE}
+# Packages
+
+# Graphics
+library(ggplot2)
+library(cowplot)
+library(lattice)
+library(hexbin)
+library(gridExtra)
+library(reshape2)
+library(grid)
+library(tidyverse)
+library(tidymodels)
+
+# Table formatting
+library(xtable)
+library(pander)
+library(kableExtra)
+library(vtable)
+
+# Machine Learning
+library(keras)
+library(tensorflow)
+
+# Other
+library(readr)
+library(dplyr)
+library(lubridate)
+library(RSQLite)
+
+
+
+
+```
+
+
+# Excercise 1
+
+
+
+```{r}
+
+# Load in the dataset
+tidy_finance <- dbConnect(
+  SQLite(),
+  "tidy_finance_ML.sqlite",
+  extended_types = TRUE
+)
+
+stock_characteristics_monthly <- tbl(tidy_finance, "stock_characteristics_monthly") |> collect()
+
+
+```
+
+The dataset includes observations from January 1st.
+
+
+```{r}
+
+# Renaming column names according to the names from the Gu et al paper
+
+colnames(stock_characteristics_monthly) <- c("permno", "month", "ret_excess", "mktcap_lag", "sic2", 
+                                             "m_bm", "m_ntis", "m_tbl", "m_dfy",
+                                             "c_mom1m", "c_mom12m", "c_chmom", "c_maxret", "c_mvel1")
+
+
+# Filtering out characteristics and only include data from 2005-01-01
+stock_characteristics_monthly <- stock_characteristics_monthly |>
+               select(permno, month, ret_excess, mktcap_lag, sic2, 
+                      m_bm, m_ntis, m_tbl, m_dfy, 
+                      c_mom1m, c_mom12m, c_chmom, c_maxret, c_mvel1) |>     
+               filter(month >= "2005-01-01") |>
+               drop_na()
+
+# Turn sic2 into a factor instead of numerical value
+stock_characteristics_monthly$sic2 <- as.factor(stock_characteristics_monthly$sic2)
+
+# Convert month column to Date format
+stock_characteristics_monthly$month <- as.Date(stock_characteristics_monthly$month)
+
+```
+
+We make summary statistics below
+
+```{r fig.height=5, fig.width=10}
+
+
+# Counting how many firms (permno) thats in each industry (sic2) for each month
+no_industry <- select(stock_characteristics_monthly, permno, month, sic2) |>
+                group_by(month, sic2) |>
+                summarise(n = n())
+
+# Creates a stacked barplot
+ggplot(no_industry, aes(fill=sic2, y=n, x=month)) +
+  geom_bar(position = "stack", stat = "identity") +
+  ggtitle("Number of unique firms (permno) in each industry classification (sic2) for each month") + 
+  xlab("Time") + 
+  ylab("No. firms") +
+  scale_fill_discrete(name = "Industry classifications (sic2)")
+
+```
+
+
+
+
+
+
+Summary table
+
+```{r}
+
+
+stock_characteristics_monthly_summary <- stock_characteristics_monthly |>
+  select(-permno, -month, -sic2) |>
+  pivot_longer(cols = everything(), names_to = "Variables", values_to = "Value") |>
+  group_by(Variables) |>
+  summarize_all(list(mean = mean, 
+                     sd = sd,
+                     min = min,
+                     median = median,
+                     max = max)) |>
+  knitr::kable(booktabs = TRUE, digits = 2, caption = "Summary statistics of the predictors") |> 
+  kable_paper("hover", full_width = T) |>  
+  group_rows("Stock Characteristics", 1, 5) |> 
+  group_rows("Macro Characteristics", 6, 9) |> 
+  group_rows("Initial Variables", 10, 11)
+
+stock_characteristics_monthly_summary
+
+```
+
+
+We now make the recipe
+
+```{r}
+
+
+rec <- recipe(ret_excess ~ ., data = stock_characteristics_monthly) |>
+  step_rm(permno:month) |>
+  step_interact(terms = ~contains("c_"):contains("m_")) |>
+  step_dummy(sic2, one_hot = TRUE) |>
+  step_normalize(all_predictors()) |>
+  step_center(ret, skip = TRUE)
+
+
+```
+
+# Excercise 2
+
+Gu et al. (2020) describe an asset’s excess return as an additive prediction error model the following way:
+
+$$r_{i,t+1} = E_t(r_{i,t+1}) + \varepsilon_{i,t+1} \quad \text{where} \quad E_t(r_{i,t+1}) = g(z_{i,t})$$
+Where $g(z_{i,t})$ is a function of the $P$-dimensional vector $z_{i,t}$ of predictor variables. 
+
+As stated in the paper this would be considered a very flexible model, however it imposes some important restrictions. First the $g(\cdot)$ function depends neither on the individual stock or time period. It thus leverages of the information from the entire dataset. The functional form thus doesn't adjust by time period or for specific stocks. For example one variable could have a larger explanatory power in the beginning of the time period but much lesser towards the end. The effect from the predictor would still remain constant, and could also relate to overfitting the model.  The model also assumes that the prediction error $\varepsilon_{i,t+1}$ is additive and independent of the predictor variables, which may not hold in reality.
+
+
+# Excercise 3
+
+Making the train-validation-test split with 20% of the last observations as test data and make 20% of the train data into validation.
+
+
+```{r}
+
+test_data <- stock_characteristics_monthly |>
+  filter(month > "2017-02-01") 
+  
+
+validation_data <- stock_characteristics_monthly |>
+  filter(month >= "2014-07-01", month <="2017-02-01")
+
+train_data <- stock_characteristics_monthly |>
+  filter(month < "2014-07-01")
+
+        
+
+
+```
+
+
+# Excercise 4
+
+Neural Network
+
+```{r}
+
+
+
+lambda <- 0.0001
+dropout_rate <- 0.05
+
+NN_model <- keras_model_sequential() |>
+    layer_dense(units = 10, activation = "sigmoid", input_shape = 13, kernel_regularizer = regularizer_l2(lambda)) |>
+    layer_dropout(rate=dropout_rate) |>
+    layer_dense(units = 10, activation = "sigmoid", kernel_regularizer = regularizer_l2(lambda)) |>
+    layer_dropout(rate=dropout_rate) |>
+    layer_dense(units = 10, activation = "sigmoid", kernel_regularizer = regularizer_l2(lambda)) |>
+    layer_dropout(rate=dropout_rate) |>
+    layer_dense(units = 1, activation = "linear") |>
+
+  compile(
+    loss = 'mse',
+    optimizer = optimizer_rmsprop(learning_rate=0.001, rho=0.9)    
+)
+  
+NN_model |>
+  fit(
+    x = train_data |>
+      select(-ret_excess) |>
+      as.matrix(),
+    y = train_data$ret_excess,
+    epochs = 20, batch_size = 64, verbose = FALSE
+  )
+
+
+```
+
+
+
+
+
