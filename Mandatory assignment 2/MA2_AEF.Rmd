@@ -2,48 +2,11 @@
 title: "Mandatory Assignment 1 AEF"
 author: 'ncx951 & dsc579'
 date: "`r Sys.Date()`"
-output:
-  pdf_document:
-    toc: no
-  html_document:
-    theme: readable
-    toc: yes
-    toc_float: yes
-    code_folding: hide
-header-includes:
-- \usepackage{graphicx}
-- \usepackage{float}
-editor_options:
-  markdown:
-    wrap: 72
+output: html_document
+
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-	echo = TRUE,
-	fig.align = "center",
-	fig.path = "figure/graphics-",
-	fig.pos = "H",
-	message = FALSE,
-	warning = FALSE,
-	cache = TRUE,
-	cache.path = "cache/graphics-",
-	external = TRUE
-)
-rm(list = ls())
 
-library(knitr)
-  opts_chunk$set(fig.path='figure/graphics-', 
-                 cache.path='cache/graphics-', 
-                 fig.align='center',
-                 external=TRUE,
-                 echo=TRUE,
-                 warning=FALSE,
-                 fig.pos='H'
-                )
-  a4width<- 8.3
-  a4height<- 11.7
-```
 
 ```{r include=FALSE}
 # Packages
@@ -59,6 +22,7 @@ library(grid)
 library(tidyverse)
 library(tidymodels)
 
+
 # Table formatting
 library(xtable)
 library(pander)
@@ -68,13 +32,14 @@ library(vtable)
 # Machine Learning
 library(keras)
 library(tensorflow)
+library(Metrics)
 
 # Other
 library(readr)
 library(dplyr)
 library(lubridate)
 library(RSQLite)
-
+library(knitr)
 
 
 
@@ -84,9 +49,7 @@ library(RSQLite)
 # Excercise 1
 
 
-
-```{r}
-
+```{r cache=TRUE}
 # Load in the dataset
 tidy_finance <- dbConnect(
   SQLite(),
@@ -94,15 +57,22 @@ tidy_finance <- dbConnect(
   extended_types = TRUE
 )
 
+
 stock_characteristics_monthly <- tbl(tidy_finance, "stock_characteristics_monthly") |> collect()
-
-
 ```
 
-The dataset includes observations from January 1st.
 
 
-```{r}
+
+```{r cache=TRUE}
+
+# Filtering out characteristics and only include data from 2005-01-01
+stock_characteristics_monthly <- stock_characteristics_monthly |>
+               select(permno, month, ret_excess, mktcap_lag, sic2, 
+                      macro_bm, macro_ntis, macro_tbl, macro_dfy, 
+                      characteristic_mom1m, characteristic_mom12m, characteristic_chmom, characteristic_maxret, characteristic_mvel1) |>     
+               filter(month >= "2005-01-01") |>
+               drop_na()
 
 # Renaming column names according to the names from the Gu et al paper
 
@@ -110,22 +80,18 @@ colnames(stock_characteristics_monthly) <- c("permno", "month", "ret_excess", "m
                                              "m_bm", "m_ntis", "m_tbl", "m_dfy",
                                              "c_mom1m", "c_mom12m", "c_chmom", "c_maxret", "c_mvel1")
 
-
-# Filtering out characteristics and only include data from 2005-01-01
-stock_characteristics_monthly <- stock_characteristics_monthly |>
-               select(permno, month, ret_excess, mktcap_lag, sic2, 
-                      m_bm, m_ntis, m_tbl, m_dfy, 
-                      c_mom1m, c_mom12m, c_chmom, c_maxret, c_mvel1) |>     
-               filter(month >= "2005-01-01") |>
-               drop_na()
-
 # Turn sic2 into a factor instead of numerical value
 stock_characteristics_monthly$sic2 <- as.factor(stock_characteristics_monthly$sic2)
 
 # Convert month column to Date format
 stock_characteristics_monthly$month <- as.Date(stock_characteristics_monthly$month)
 
+dbDisconnect(tidy_finance)
+remove(tidy_finance)
+
 ```
+
+The dataset includes observations from January 1st 2005. 
 
 We make summary statistics below
 
@@ -136,7 +102,7 @@ We make summary statistics below
 no_industry <- select(stock_characteristics_monthly, permno, month, sic2) |>
                 group_by(month, sic2) |>
                 summarise(n = n())
-
+ 
 # Creates a stacked barplot
 ggplot(no_industry, aes(fill=sic2, y=n, x=month)) +
   geom_bar(position = "stack", stat = "identity") +
@@ -177,20 +143,7 @@ stock_characteristics_monthly_summary
 ```
 
 
-We now make the recipe
 
-```{r}
-
-
-rec <- recipe(ret_excess ~ ., data = stock_characteristics_monthly) |>
-  step_rm(permno:month) |>
-  step_interact(terms = ~contains("c_"):contains("m_")) |>
-  step_dummy(sic2, one_hot = TRUE) |>
-  step_normalize(all_predictors()) |>
-  step_center(ret, skip = TRUE)
-
-
-```
 
 # Excercise 2
 
@@ -209,17 +162,42 @@ Making the train-validation-test split with 20% of the last observations as test
 
 ```{r}
 
-test_data <- stock_characteristics_monthly |>
-  filter(month > "2017-02-01") 
-  
+# Splitting into a 80/20 test-train split
 
-validation_data <- stock_characteristics_monthly |>
-  filter(month >= "2014-07-01", month <="2017-02-01")
+split_train <- initial_time_split(
+  stock_characteristics_monthly |>
+    select(-permno, -month),
+  prop = 4/5
+)
 
-train_data <- stock_characteristics_monthly |>
-  filter(month < "2014-07-01")
+# Further splitting 20% of training data into validation
 
-        
+new_split_train <- initial_time_split(
+  training(split_train), 
+  prob = 4/5
+)
+
+
+# Making the recipe        
+rec <- recipe(ret_excess ~ ., data = new_split_train) |>
+  step_interact(terms = ~contains("c_"):contains("m_")) |>
+  step_dummy(sic2, one_hot = TRUE) |>
+  step_normalize(all_predictors()) |>
+  step_center(ret_excess, skip = TRUE)
+
+
+# Preprocess the training data
+prep_train <- prep(rec, training(new_split_train))
+data_train <- bake(prep_train, new_data = training(new_split_train))
+
+# Preprocess the validation data
+
+prep_val <- prep(rec, testing(new_split_train))
+data_val <- bake(prep_train, new_data = testing(new_split_train))
+
+# Preprocess the testing data
+prep_test <- prep(rec, testing(split_train))
+data_test <- bake(prep_train, new_data = testing(split_train))
 
 
 ```
@@ -237,7 +215,7 @@ lambda <- 0.0001
 dropout_rate <- 0.05
 
 NN_model <- keras_model_sequential() |>
-    layer_dense(units = 10, activation = "sigmoid", input_shape = 13, kernel_regularizer = regularizer_l2(lambda)) |>
+    layer_dense(units = 10, activation = "sigmoid", input_shape = 100, kernel_regularizer = regularizer_l2(lambda)) |>
     layer_dropout(rate=dropout_rate) |>
     layer_dense(units = 10, activation = "sigmoid", kernel_regularizer = regularizer_l2(lambda)) |>
     layer_dropout(rate=dropout_rate) |>
@@ -249,19 +227,34 @@ NN_model <- keras_model_sequential() |>
     loss = 'mse',
     optimizer = optimizer_rmsprop(learning_rate=0.001, rho=0.9)    
 )
-  
-NN_model |>
+ 
+ 
+NN_fit <- NN_model |>
   fit(
-    x = train_data |>
+    x = data_train |>
       select(-ret_excess) |>
       as.matrix(),
-    y = train_data$ret_excess,
-    epochs = 20, batch_size = 64, verbose = FALSE
+    y = data_train |>
+      pull(ret_excess),
+    epochs = 20, batch_size = 128, verbose = FALSE
   )
 
 
 ```
 
+
+```{r}
+
+NN_pred <- NN_model |>
+  predict(data_val |>
+          select(-ret_excess) |>
+          as.matrix()
+            )
+
+# Compute MSE
+mse_NN <- mse(NN_pred, data_val$ret_excess)
+print(paste0("MSE: ", mse_NN))
+```
 
 
 
