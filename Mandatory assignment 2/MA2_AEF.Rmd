@@ -1,9 +1,10 @@
 ---
-title: "Mandatory Assignment 1 AEF"
-author: 'ncx951 & dsc579'
+title: "Mandatory Assignment 2 AEF"
+author: "ncx951 & dsc579"
 date: "`r Sys.Date()`"
-output: html_document
-
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 
@@ -48,6 +49,8 @@ library(knitr)
 
 # Excercise 1
 
+We load in the dataset and select the following variables based on figure 5 from the Gu et al (2020) paper. We choose the among the variables that contributes the most to overall model contribution. 
+
 
 ```{r cache=TRUE}
 # Load in the dataset
@@ -91,9 +94,9 @@ remove(tidy_finance)
 
 ```
 
-The dataset includes observations from January 1st 2005. 
+The dataset includes observations from January 1st 2005 and onward. 
 
-We make summary statistics below
+We perform EDA for the number of unique firms (permno) in each industry classification (sic2) for each month. 
 
 ```{r fig.height=5, fig.width=10}
 
@@ -118,7 +121,7 @@ ggplot(no_industry, aes(fill=sic2, y=n, x=month)) +
 
 
 
-Summary table
+Summary table of our choosen variables.
 
 ```{r}
 
@@ -244,17 +247,138 @@ NN_fit <- NN_model |>
 
 
 ```{r}
+#############################
+# This code is used for optimizing the NN.
+# It takes a very long time to run and uses a lot of RAM storage.
+# We don't recommend running it and have provided a summary table below with the results.
+############################
 
-NN_pred <- NN_model |>
-  predict(data_val |>
-          select(-ret_excess) |>
-          as.matrix()
-            )
+# # Define the hyperparameters you want to tune
+# nodes <- c(5, 10, 15)
+# lambdas <- c(0.0001, 0.001, 0.01)
+# 
+# # Create an empty data frame to store the results
+# results <- data.frame()
+# 
+# # Perform a grid search over the hyperparameters
+# for (n in nodes) {
+#   for (l in lambdas) {
+#     # Define the model with the current hyperparameters
+#     NN_model <- keras_model_sequential() %>%
+#       layer_dense(units = n, activation = "sigmoid", input_shape = 100, kernel_regularizer = regularizer_l2(l)) %>%
+#       layer_dense(units = n, activation = "sigmoid", kernel_regularizer = regularizer_l2(l)) %>%
+#       layer_dense(units = 1, activation = "linear") %>%
+#       compile(loss = "mse", optimizer = optimizer_rmsprop(learning_rate = 0.001, rho = 0.9))
+# 
+#     # Train the model
+#     NN_fit <- NN_model %>%
+#       fit(x = data_train %>% select(-ret_excess) %>% as.matrix(),
+#           y = data_train %>% pull(ret_excess),
+#           epochs = 20, batch_size = 128, verbose = FALSE)
+# 
+#     # Make predictions on the validation data
+#     NN_pred <- NN_model %>% predict(data_val %>% select(-ret_excess) %>% as.matrix())
+# 
+#     # Compute MSE
+#     mse_NN <- mse(NN_pred, data_val$ret_excess)
+# 
+#     # Add the results to the data frame
+#     results <- rbind(results, data.frame(NumNodes = n, Lambda = l, MSE = mse_NN))
+#   }
+# }
 
-# Compute MSE
-mse_NN <- mse(NN_pred, data_val$ret_excess)
-print(paste0("MSE: ", mse_NN))
+
 ```
+
+
+```{r}
+
+# Display the results in a table
+
+NN_tuning_summary <- matrix(c(
+  5, 0.0001, 0.02829,
+  10, 0.0001, 0.02834,
+  15, 0.0001, 0.02832,
+  5, 0.001, 0.02872,
+  10, 0.001, 0.02884,
+  15, 0.001, 0.02880,
+  5, 0.01, 0.02874,
+  10, 0.01, 0.02874,
+  15, 0.01, 0.02904
+), ncol = 9)
+
+rownames(NN_tuning_summary) <- c("No. neurons at each layer", "lambda for L2-regularization", "MSE")
+
+NN_tuning_summary |> knitr::kable(booktabs = TRUE, digits = 5, caption = "Neural network performance for different hyperparameters") |> kable_paper("hover", full_width = T)
+
+```
+
+
+```{r}
+
+# This is the final model we decide to go with. 
+
+NN_model <- keras_model_sequential() |>
+      layer_dense(units = 5, activation = "sigmoid", input_shape = 100, kernel_regularizer = regularizer_l2(0.0001)) |>
+      layer_dense(units = 5, activation = "sigmoid", kernel_regularizer = regularizer_l2(0.0001)) |>
+      layer_dense(units = 1, activation = "linear") |>
+      compile(loss = "mse", optimizer = optimizer_rmsprop(learning_rate = 0.001, rho = 0.9))
+
+# Train the model
+NN_fit <- NN_model |>
+      fit(x = data_train |> select(-ret_excess) |> as.matrix(),
+          y = data_train |> pull(ret_excess),
+          epochs = 20, batch_size = 128, verbose = FALSE)
+
+# Make predictions on the validation data
+NN_pred <- NN_model |> predict(data_val|> select(-ret_excess) |> as.matrix())
+
+
+```
+
+# Excercise 5
+
+
+```{r}
+# Add the month variable back to the data_test dataset
+data_test <- cbind(testing(split_train)[, c("month", "permno")], data_test)
+
+# 1. Make predictions on the test dataset
+NN_test_pred <- NN_model |>
+  predict(data_test |>
+            select(-ret_excess) |>
+            as.matrix())
+
+# Add predictions back to the test dataset
+data_test$predictions <- NN_test_pred
+
+# 2. Sort stocks into deciles based on the model's forecasts
+data_test <- data_test |>
+  group_by(month = lubridate::floor_date(data_test$month, "month")) |>
+  mutate(decile = ntile(predictions, 10))
+
+# 3. Reconstitute portfolios each month using value weights
+monthly_returns <- data_test |>
+  group_by(month, decile) |>
+  summarize(weighted_ret = sum(ret_excess * mktcap_lag) / sum(mktcap_lag),
+            .groups = "drop")
+
+# 4. Construct a zero-net-investment portfolio
+zero_net_investment <- monthly_returns |>
+  filter(decile %in% c(1, 10)) |>
+  group_by(month) |>
+  summarize(returns = weighted_ret[decile == 10] - weighted_ret[decile == 1],
+            .groups = "drop")
+
+# 5. Discuss the findings and evaluate the portfolio performance
+overall_return <- prod(1 + zero_net_investment$returns) - 1
+avg_monthly_return <- mean(zero_net_investment$returns)
+
+
+
+```
+
+
 
 
 
