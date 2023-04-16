@@ -3,10 +3,25 @@ title: "Mandatory Assignment 2 AEF"
 author: "ncx951 & dsc579"
 date: "`r Sys.Date()`"
 output:
-  pdf_document: default
-  html_document: default
+  pdf_document:
+    toc: no
+  html_document:
+    theme: readable
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+header-includes:
+- \usepackage{graphicx}
+- \usepackage{float}
+editor_options:
+  markdown:
+    wrap: 72
 ---
 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE)
+```
 
 
 ```{r include=FALSE}
@@ -14,31 +29,20 @@ output:
 
 # Graphics
 library(ggplot2)
-library(cowplot)
-library(lattice)
-library(hexbin)
 library(gridExtra)
-library(reshape2)
-library(grid)
 library(tidyverse)
 library(tidymodels)
 
 
 # Table formatting
-library(xtable)
-library(pander)
 library(kableExtra)
-library(vtable)
+
 
 # Machine Learning
 library(keras)
-library(tensorflow)
 library(Metrics)
 
 # Other
-library(readr)
-library(dplyr)
-library(lubridate)
 library(RSQLite)
 library(knitr)
 
@@ -49,10 +53,13 @@ library(knitr)
 
 # Excercise 1
 
-We load in the dataset and select the following variables based on figure 5 from the Gu et al (2020) paper. We choose the among the variables that contributes the most to overall model contribution. 
+We load in the dataset and select the following variables based on figure 5 from the Gu et al (2020) paper. We choose among the variables that contributes the most to overall model contribution from figure 5 from the paper. We end up using the financial/stock characteristic variables chmom, max_ret, mom12m, mom1m, mvel1. We also include the macroeconomic variables bm, dfy, ntis and tbl. These variables constitutes our predictor variables $z_{i,t}$. We also make interactions between our financial and macroeconomic variables and include them in the analysis. Lastly we generate dummies for each industy classifier contained in the sic2 variables. We do this by implementing it as a recipe. Our dataset also include permno (stock identifier), month, ret_excess (excess returns for stock *i*) and mktcap_lag (lagged marketcap for stock *i*). The financial and macroeconomic variables are already lagged by one month while the excess returns are not. Thus we don't need to make any lagging of the variables in order to make our analysis. 
+
+The dataset includes observations from January 1st 2005 and onward.
 
 
 ```{r cache=TRUE}
+
 # Load in the dataset
 tidy_finance <- dbConnect(
   SQLite(),
@@ -60,8 +67,17 @@ tidy_finance <- dbConnect(
   extended_types = TRUE
 )
 
+# Filtering out characteristics and only include data from 2005-01-01
 
-stock_characteristics_monthly <- tbl(tidy_finance, "stock_characteristics_monthly") |> collect()
+stock_characteristics_monthly <- tbl(tidy_finance, "stock_characteristics_monthly") |>
+               select(permno, month, ret_excess, mktcap_lag, sic2, 
+                      macro_bm, macro_ntis, macro_tbl, macro_dfy, 
+                      characteristic_mom1m, characteristic_mom12m, characteristic_chmom, characteristic_maxret, characteristic_mvel1) |>     
+              collect() |>
+              filter(month >= "2005-01-01") |>
+              drop_na()
+
+                      
 ```
 
 
@@ -69,13 +85,6 @@ stock_characteristics_monthly <- tbl(tidy_finance, "stock_characteristics_monthl
 
 ```{r cache=TRUE}
 
-# Filtering out characteristics and only include data from 2005-01-01
-stock_characteristics_monthly <- stock_characteristics_monthly |>
-               select(permno, month, ret_excess, mktcap_lag, sic2, 
-                      macro_bm, macro_ntis, macro_tbl, macro_dfy, 
-                      characteristic_mom1m, characteristic_mom12m, characteristic_chmom, characteristic_maxret, characteristic_mvel1) |>     
-               filter(month >= "2005-01-01") |>
-               drop_na()
 
 # Renaming column names according to the names from the Gu et al paper
 
@@ -94,7 +103,6 @@ remove(tidy_finance)
 
 ```
 
-The dataset includes observations from January 1st 2005 and onward. 
 
 We perform EDA for the number of unique firms (permno) in each industry classification (sic2) for each month. 
 
@@ -109,7 +117,7 @@ no_industry <- select(stock_characteristics_monthly, permno, month, sic2) |>
 # Creates a stacked barplot
 ggplot(no_industry, aes(fill=sic2, y=n, x=month)) +
   geom_bar(position = "stack", stat = "identity") +
-  ggtitle("Number of unique firms (permno) in each industry classification (sic2) for each month") + 
+  ggtitle("Figure 1: Number of unique firms (permno) in each industry classification (sic2) for each month") + 
   xlab("Time") + 
   ylab("No. firms") +
   scale_fill_discrete(name = "Industry classifications (sic2)")
@@ -117,11 +125,10 @@ ggplot(no_industry, aes(fill=sic2, y=n, x=month)) +
 ```
 
 
+We notice that the total number of firms tend to decrease over time. While the ratio of industries somewhat seems to be the same over time.
 
 
-
-
-Summary table of our choosen variables.
+Lastly we show a summary table of our chosen variables.
 
 ```{r}
 
@@ -146,6 +153,22 @@ stock_characteristics_monthly_summary
 ```
 
 
+One might note that there's a big difference between the minimum ret_excess and maximum ret_excess. While the median is only 0 and much closer to the minimum. 
+This could indicate that high returns only occur rarely. 
+
+
+```{r}
+
+# Making the recipe        
+rec <- recipe(ret_excess ~ ., data = stock_characteristics_monthly) |>
+  step_rm(permno:month) |>
+  step_interact(terms = ~contains("c_"):contains("m_")) |>
+  step_dummy(sic2, one_hot = TRUE) |>
+  step_normalize(all_predictors()) |>
+  step_center(ret_excess, skip = TRUE) 
+
+```
+
 
 
 # Excercise 2
@@ -157,102 +180,105 @@ Where $g(z_{i,t})$ is a function of the $P$-dimensional vector $z_{i,t}$ of pred
 
 As stated in the paper this would be considered a very flexible model, however it imposes some important restrictions. First the $g(\cdot)$ function depends neither on the individual stock or time period. It thus leverages of the information from the entire dataset. The functional form thus doesn't adjust by time period or for specific stocks. For example one variable could have a larger explanatory power in the beginning of the time period but much lesser towards the end. The effect from the predictor would still remain constant, and could also relate to overfitting the model.  The model also assumes that the prediction error $\varepsilon_{i,t+1}$ is additive and independent of the predictor variables, which may not hold in reality.
 
+Arbitrage Pricing Theory assumes that in a competitive and frictionless market, the return of an asset can be described by the equation:
+
+$$R_i = a_i + b_i'f + \varepsilon_i$$
+Where $R_i$ is the return of asset $i$, $a_i$ is the intercept of the model, $b_i$ is the $(K \times 1)$ vector of factor loadings and $f$
+ is a $(K \times 1)$ vector of common factor realizations. And $\varepsilon_i$ is white-noise i.e. $E(\varepsilon_i)=0$. Thus we can translate the APT model into an additive model as following:
+ 
+ $$E(R_i) = a_i + b_i'f = g(z_i)$$
+Where we have that $z_i \equiv [a_i,f]'$ is the $(K + 1 \times 1)$ vector of factors. For the APT model we have a linear function (i.e the form of $g(\cdot)$ is linear), and we could thus estimate the parameters with a regression. In this case of time series analysis we also have a time aspect, where we want to estimate excess returns: $r_i = R_i-R_{rf}$ at time $t$ and we can then translate the equation into:
+
+$$r_{i,t+1} = E(r_{i,t+1}) + \varepsilon_{i,t+1} = g(z_{i,t}) + \varepsilon_{i,t+1}$$
+This model shares some of the same issues as stated above.
+
 
 # Excercise 3
 
-Making the train-validation-test split with 20% of the last observations as test data and make 20% of the train data into validation.
+
+## Hyperparameter tuning
+
+Hyperparameter selection, also known as hyperparameter tuning or optimization, is a crucial step in the machine learning process. The primary purpose of this procedure is to find the optimal set of hyperparameters that improve the model's performance on unseen data. Hyperparameters are external configurations of the model that cannot be learned during the training process. They directly affect the behavior of the model and its ability to generalize. And they're used to counterfeit overfitting.
+
+The objective function in hyperparameter selection measures the performance of the model with a specific set of hyperparameters on the validation data. The goal is to minimize (or maximize) this objective function, depending on the context, by searching through various hyperparameter combinations. For instance consider the L2 regularization objective function. Where the goal is to minimese the squared residuals of predictions (MSPE).
+
+$$\mathcal{L} (\theta) = \frac{1}{NT} \sum^N_{i=1} \sum^T_{t=1} (r_{i,t+1}-g(z_{i,t};\theta))^2$$
+
+Fitting a model based on the entire dataset without a separate validation or test set can be unwise in certain circumstances, especially when the primary goal is to achieve good generalization performance. Using the entire dataset for training can lead to overfitting, where the model performs well on the training data but poorly on unseen data. This occurs because the model has learned the noise in the data and fails to capture the underlying pattern.
+
+1. Limitations or alternatives to selecting tuning parameters from a validation sample:
+
+2. Limited data: If the dataset is small, setting aside a portion of it for validation may result in insufficient data for training, limiting the model's ability to learn the underlying pattern effectively.
+
+3. Overfitting to the validation set: If the hyperparameter optimization process is too extensive, the model may overfit to the validation set, resulting in poor generalization performance on unseen data.
+
+Computationally expensive: Exhaustive search methods like grid search can be computationally expensive, especially when the search space is large, and the model takes a long time to train.
+
+Making the train-validation-test split with 20% of the last observations as test data and make 20% of the train data into validation. That is we keep data points from 2017-03-01 and onward as test data. We keep from 2014-07-01 until 2017-02-01 as validation data. While we keep the remaining data starting from 2005-01-01 as training data. We keep the splits constant for this assignment.  
 
 
 ```{r}
 
-# Splitting into a 80/20 test-train split
 
-split_train <- initial_time_split(
-  stock_characteristics_monthly |>
-    select(-permno, -month),
-  prop = 4/5
-)
+# Splitting the data
 
-# Further splitting 20% of training data into validation
-
-new_split_train <- initial_time_split(
-  training(split_train), 
-  prob = 4/5
-)
+test_split <- stock_characteristics_monthly |> filter(month > "2017-02-01")
+val_split <- stock_characteristics_monthly |> filter(month >= "2014-07-01", month <="2017-02-01")
+train_split <- stock_characteristics_monthly |> filter(month < "2014-07-01")
 
 
-# Making the recipe        
-rec <- recipe(ret_excess ~ ., data = new_split_train) |>
-  step_interact(terms = ~contains("c_"):contains("m_")) |>
-  step_dummy(sic2, one_hot = TRUE) |>
-  step_normalize(all_predictors()) |>
-  step_center(ret_excess, skip = TRUE)
 
 
 # Preprocess the training data
-prep_train <- prep(rec, training(new_split_train))
-data_train <- bake(prep_train, new_data = training(new_split_train))
+prep_train <- prep(rec, train_split)
+data_train <- bake(prep_train, new_data = train_split)
 
 # Preprocess the validation data
 
-prep_val <- prep(rec, testing(new_split_train))
-data_val <- bake(prep_train, new_data = testing(new_split_train))
+prep_val <- prep(rec, val_split)
+data_val <- bake(prep_val, new_data = val_split)
 
 # Preprocess the testing data
-prep_test <- prep(rec, testing(split_train))
-data_test <- bake(prep_train, new_data = testing(split_train))
+prep_test <- prep(rec, test_split)
+data_test <- bake(prep_test, new_data = test_split)
 
 
 ```
+
+
 
 
 # Excercise 4
 
-Neural Network
+## Neural Network
 
-```{r}
+Neural networks are a class of machine learning models inspired by the structure and function of the human brain. They consist of interconnected layers of artificial neurons, also called nodes, with each layer transforming the input data into more abstract representations. A typical neural network consists of an input layer, one or more hidden layers, and an output layer. Each connection between neurons has a weight that determines the strength of the connection. The input data is fed into the input layer, and the output layer provides the final prediction. Activation functions, such as ReLU (Rectified Linear Unit) or sigmoid, are used in the neurons to introduce non-linearity, which allows the network to learn complex patterns.
 
+The objective function  measures the difference between the model's predictions $\hat{y}_t$ and the actual target values $y_t$. In a regression problem, a common objective function is the Mean Squared Error (MSE), which calculates the average of the squared differences between the predicted and actual values, $MSE = \frac{1}{N} \sum^N_{i=1} (\hat{y}_t - y_t)^"$. The goal of training the neural network is to minimize the objective function by adjusting the weights and biases through a process called backpropagation. 
 
+The hyperparameters to be chosen before training the model in Neural Networks include:
 
-lambda <- 0.0001
-dropout_rate <- 0.05
+- Number of hidden layers
+- Number of neurons at each hidden layer
+- Activation function used at each layer
+- Learning rate for backpropagation
+- Regularization such as L1 or L2
+- Epochs
+- Bath size
 
-NN_model <- keras_model_sequential() |>
-    layer_dense(units = 10, activation = "sigmoid", input_shape = 100, kernel_regularizer = regularizer_l2(lambda)) |>
-    layer_dropout(rate=dropout_rate) |>
-    layer_dense(units = 10, activation = "sigmoid", kernel_regularizer = regularizer_l2(lambda)) |>
-    layer_dropout(rate=dropout_rate) |>
-    layer_dense(units = 10, activation = "sigmoid", kernel_regularizer = regularizer_l2(lambda)) |>
-    layer_dropout(rate=dropout_rate) |>
-    layer_dense(units = 1, activation = "linear") |>
-
-  compile(
-    loss = 'mse',
-    optimizer = optimizer_rmsprop(learning_rate=0.001, rho=0.9)    
-)
- 
- 
-NN_fit <- NN_model |>
-  fit(
-    x = data_train |>
-      select(-ret_excess) |>
-      as.matrix(),
-    y = data_train |>
-      pull(ret_excess),
-    epochs = 20, batch_size = 128, verbose = FALSE
-  )
+A major drawback of Neural Network is their computational load. In this paper we oncly consider a NN with 2 layers and relatively few neurons at each layer. Since the dataset is quite vast and optimization takes a very long time. Below we provide a summary table of the different hyperparameters we have tuned on.
 
 
-```
+
 
 
 ```{r}
-#############################
-# This code is used for optimizing the NN.
-# It takes a very long time to run and uses a lot of RAM storage.
-# We don't recommend running it and have provided a summary table below with the results.
-############################
-
+# #############################
+# # This code is used for optimizing the NN.
+# # It takes a very long time to run and uses a lot of RAM storage.
+# # We don't recommend running it and have provided a summary table below with the results.
+# ############################
+# 
 # # Define the hyperparameters you want to tune
 # nodes <- c(5, 10, 15)
 # lambdas <- c(0.0001, 0.001, 0.01)
@@ -291,27 +317,37 @@ NN_fit <- NN_model |>
 ```
 
 
+
 ```{r}
 
 # Display the results in a table
 
 NN_tuning_summary <- matrix(c(
-  5, 0.0001, 0.02829,
-  10, 0.0001, 0.02834,
-  15, 0.0001, 0.02832,
-  5, 0.001, 0.02872,
-  10, 0.001, 0.02884,
-  15, 0.001, 0.02880,
-  5, 0.01, 0.02874,
-  10, 0.01, 0.02874,
-  15, 0.01, 0.02904
+  5, 0.0001, 0.03331968,
+  5, 0.001, 0.02883166,
+  5, 0.01, 0.02844423,
+  10, 0.0001, 0.03425359,
+  10, 0.001, 0.02872601,
+  10, 0.01, 0.02845879,
+  15, 0.0001, 0.03201289,
+  15, 0.001, 0.02859830,
+  15, 0.01, 0.02861793
 ), ncol = 9)
 
 rownames(NN_tuning_summary) <- c("No. neurons at each layer", "lambda for L2-regularization", "MSE")
 
-NN_tuning_summary |> knitr::kable(booktabs = TRUE, digits = 5, caption = "Neural network performance for different hyperparameters") |> kable_paper("hover", full_width = T)
+NN_tuning_summary |> knitr::kable(booktabs = TRUE, digits = 5, caption = "Neural network performance for different hyperparameters (evaluated on the validation data)") |> kable_paper("hover", full_width = T)
 
 ```
+
+
+Our chosen network is structured as following:
+
+- 2 hidden layers with 5 neurons each
+- Sigmoid activation function in the hidden layers with a linear in the output.
+- L2 regularization with $\lambda = 0.01$
+
+
 
 
 ```{r}
@@ -319,8 +355,8 @@ NN_tuning_summary |> knitr::kable(booktabs = TRUE, digits = 5, caption = "Neural
 # This is the final model we decide to go with. 
 
 NN_model <- keras_model_sequential() |>
-      layer_dense(units = 5, activation = "sigmoid", input_shape = 100, kernel_regularizer = regularizer_l2(0.0001)) |>
-      layer_dense(units = 5, activation = "sigmoid", kernel_regularizer = regularizer_l2(0.0001)) |>
+      layer_dense(units = 5, activation = "sigmoid", input_shape = 100, kernel_regularizer = regularizer_l2(0.01)) |>
+      layer_dense(units = 5, activation = "sigmoid", kernel_regularizer = regularizer_l2(0.01)) |>
       layer_dense(units = 1, activation = "linear") |>
       compile(loss = "mse", optimizer = optimizer_rmsprop(learning_rate = 0.001, rho = 0.9))
 
@@ -330,49 +366,117 @@ NN_fit <- NN_model |>
           y = data_train |> pull(ret_excess),
           epochs = 20, batch_size = 128, verbose = FALSE)
 
-# Make predictions on the validation data
-NN_pred <- NN_model |> predict(data_val|> select(-ret_excess) |> as.matrix())
+
 
 
 ```
 
 # Excercise 5
 
+We predict our final fitted models on our test data. Then we calculate the predicted excess returns for each month into deciles, and then each month reconstitute portfolios using value weights. We then construct a "zero-net-investment" portfolio that buys the highest decile and sells the lowest. 
 
 ```{r}
-# Add the month variable back to the data_test dataset
-data_test <- cbind(testing(split_train)[, c("month", "permno")], data_test)
 
-# 1. Make predictions on the test dataset
-NN_test_pred <- NN_model |>
-  predict(data_test |>
-            select(-ret_excess) |>
-            as.matrix())
 
-# Add predictions back to the test dataset
-data_test$predictions <- NN_test_pred
+# Generate predictions for the withheld dataset using the Neural Network model
+NN_test_predictions <- NN_model |> predict(data_test |>
+                                              select(-ret_excess) |>
+                                              as.matrix())
 
-# 2. Sort stocks into deciles based on the model's forecasts
-data_test <- data_test |>
-  group_by(month = lubridate::floor_date(data_test$month, "month")) |>
-  mutate(decile = ntile(predictions, 10))
 
-# 3. Reconstitute portfolios each month using value weights
-monthly_returns <- data_test |>
-  group_by(month, decile) |>
-  summarize(weighted_ret = sum(ret_excess * mktcap_lag) / sum(mktcap_lag),
-            .groups = "drop")
 
-# 4. Construct a zero-net-investment portfolio
-zero_net_investment <- monthly_returns |>
-  filter(decile %in% c(1, 10)) |>
-  group_by(month) |>
-  summarize(returns = weighted_ret[decile == 10] - weighted_ret[decile == 1],
-            .groups = "drop")
+```
+```{r}
+# Add the predictions to the test dataset
 
-# 5. Discuss the findings and evaluate the portfolio performance
-overall_return <- prod(1 + zero_net_investment$returns) - 1
-avg_monthly_return <- mean(zero_net_investment$returns)
+
+test_split$NN_predictions <- NN_test_predictions
+
+test_split <- test_split |>
+  arrange(permno, month) |>
+  group_by(permno)
+
+
+```
+
+
+
+```{r}
+
+
+
+
+# Create a function to calculate deciles
+calculate_decile <- function(predictions) {
+  ntile(predictions, 10)
+}
+
+# Calculate deciles for each model's predictions
+test_split <- test_split %>%
+  group_by(month) %>%
+  mutate(NN_decile = calculate_decile(NN_predictions)) #,
+         # second_model_decile = calculate_decile(second_model_predictions))
+
+# Calculate value weights for each stock
+test_split <- test_split %>%
+  group_by(month) %>%
+  mutate(value_weight = mktcap_lag / sum(mktcap_lag))
+
+
+# Calculate the returns of the zero-net-investment portfolio for each model
+test_split <- test_split %>%
+  mutate(NN_zero_net_investment = ifelse(NN_decile == 10, ret_excess, ifelse(NN_decile == 1, -ret_excess, 0))) #,
+         # second_model_zero_net_investment = ifelse(second_model_decile == 10, ret_excess, ifelse(second_model_decile == 1, -ret_excess, 0)))
+
+# Calculate the monthly returns of the zero-net-investment portfolios
+monthly_returns <- test_split %>%
+  group_by(month) %>%
+  summarize(NN_portfolio_return = sum(NN_zero_net_investment * value_weight)) #,
+            # second_model_portfolio_return = sum(second_model_zero_net_investment * value_weight))
+
+
+
+
+```
+
+
+Below we summarize the perfomance of the portfolio
+
+```{r}
+
+
+# Calculate the market returns for each month
+market_returns <- test_split %>%
+  group_by(month) %>%
+  summarize(market_return = sum(ret_excess * value_weight))
+
+# Merge the NN portfolio returns with the market returns
+combined_returns <- left_join(monthly_returns, market_returns, by = "month")
+
+
+# Calculate descriptive statistics for the monthly returns
+combined_returns_summary <- combined_returns %>%
+  mutate(NN_cumulative_return = cumprod(1 + NN_portfolio_return),
+         market_cumulative_return = cumprod(1 + market_return)) %>%
+  summarise(mean_NN_return = mean(NN_portfolio_return),
+            sd_NN_return = sd(NN_portfolio_return),
+            sharpe_ratio_NN = mean_NN_return / sd_NN_return,
+            cumulative_NN_return = last(NN_cumulative_return),
+            mean_market_return = mean(market_return),
+            sd_market_return = sd(market_return),
+            sharpe_ratio_market = mean_market_return / sd_market_return,
+            cumulative_market_return  = last(market_cumulative_return))
+
+# Calculating alpha for the portfolios
+alpha_NN <- as.numeric(lm(NN_portfolio_return ~ market_return, data = combined_returns)$coefficients[1])
+
+
+combined_returns_summary <- matrix(c(combined_returns_summary$mean_NN_return, combined_returns_summary$sd_NN_return, combined_returns_summary$sharpe_ratio_NN, combined_returns_summary$cumulative_NN_return, combined_returns_summary$mean_market_return, combined_returns_summary$sd_market_return, combined_returns_summary$sharpe_ratio_market, combined_returns_summary$cumulative_market_return), ncol = 4)
+
+colnames(combined_returns_summary) <- c("Mean", "SD", "Sharpe Ratio", "cummulative returns")
+rownames(combined_returns_summary) <- c("NN", "Market")
+
+combined_returns_summary |> knitr::kable(booktabs = TRUE, digits = 3, caption = "Portfolio perfomances") |> kable_paper("hover", full_width = T)
 
 
 
@@ -380,6 +484,19 @@ avg_monthly_return <- mean(zero_net_investment$returns)
 
 
 
+```{r fig.height=5, fig.width=10}
+
+# Create a line plot of the NN portfolio returns and market returns
+combined_returns_plot <- ggplot(combined_returns, aes(x = month)) +
+  geom_line(aes(y = NN_portfolio_return, color = "NN Portfolio Return")) +
+  geom_line(aes(y = market_return, color = "Market Return")) +
+  labs(title = "Figure 2: Monthly Returns Performance",
+       x = "Month",
+       y = "Returns") +
+  scale_color_manual(values = c("NN Portfolio Return" = "blue", "Market Return" = "red")) 
+
+plot(combined_returns_plot)
+```
 
 
 
