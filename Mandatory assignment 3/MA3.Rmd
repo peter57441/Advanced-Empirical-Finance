@@ -1,0 +1,271 @@
+---
+title: "Mandatory Assignment 3 AEF"
+author: "ncx951 & dsc579"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: no
+  html_document:
+    theme: readable
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+header-includes:
+- \usepackage{graphicx}
+- \usepackage{float}
+editor_options:
+  markdown:
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE)
+```
+
+
+```{r}
+
+library(tidyverse)
+library(RSQLite)
+
+```
+
+
+
+# Excercise 1
+
+Parametric Portfolio Policies is a method introduced by Brandt et al. (2009) as an alternative to the traditional mean-variance approach of Markowitz (1952). The method simplifies the portfolio optimization process by leveraging firm characteristics, such as market capitalization, book-to-market ratio, or lagged return, which are related to the stock's expected return, variance, and covariance with other stocks.
+
+The intuition behind the parameter vector $\theta$ is to capture the relationship between a stock's firm characteristics and its portfolio weight. $\theta$ represents a vector of coefficients that, when combined with the standardized firm characteristics ($\hat{x}_{i,t}$), generates the optimal portfolio weights for each stock. This linear specification allows for a more stable and less complex optimization process compared to the mean-variance approach.
+
+Brandt et al. (2009) propose to estimate $\theta$ by maximizing the utility that would have been obtained by implementing the policy over the sample period. This is done by solving the investor's problem of choosing portfolio weights to maximize the expected utility of the portfolio return:
+
+$$\max_w E_t(U(r_{p,t+1}))=E_t \left[U(\sum_{i=1}^{N_t}w_{i,t}r_{i,t+1}) \right]$$
+
+The portfolio weights ($w_{i,t}$) are parametrized as a function of firm characteristics:
+
+$$w_{i,t} = \bar{w}_{i,t} + \frac{1}{N_t}\theta' \hat{x}_{i,t}$$
+Here, $\bar{w}_{i,t}$ represents the weight of a benchmark portfolio (in this case, the market capitalization-weighted portfolio), and $\hat{x}_{i,t}$ are the cross-sectionally standardized firm characteristics of stock $i$.
+
+Describing the portfolio policy as "active portfolio management relative to a performance benchmark" makes sense because the Parametric Portfolio Policies method adjusts the benchmark portfolio weights based on the firm characteristics. The market capitalization-weighted portfolio serves as a starting point, and the parametrized weights $\frac{1}{N_t}\theta' \hat{x}_{i,t}$ represent the active management component of the portfolio. By estimating $\theta$ and incorporating it into the portfolio weights, investors can create a portfolio that actively adjusts to changes in firm characteristics, which can potentially lead to better risk-adjusted returns compared to a passive benchmark portfolio.
+
+# Excercise 2
+
+The Parametric Portfolio Policies (PPP) method has its pros and cons compared to the traditional two-step procedure:
+
+**Pros:**
+
+1. Simplicity: The two-step procedure involves estimating the moments of the return distribution (expected returns, variances, and covariances) and then computing optimal weights based on these estimates. This can be complex and computationally intensive, especially for large portfolios. PPP simplifies the process by directly linking firm characteristics to portfolio weights, making the optimization process more straightforward.
+
+2. Stability: The estimates of moments in the two-step procedure can be notoriously noisy and unstable, especially when dealing with a large number of assets. Direct weight parameterization in PPP leads to more stable estimates, as it leverages firm characteristics that are more easily observable and less prone to estimation errors.
+
+3. Active management: PPP incorporates an active management component by adjusting portfolio weights based on firm characteristics. This allows investors to potentially achieve better risk-adjusted returns compared to passive benchmark portfolios.
+
+**Cons:**
+
+1. Limited scope: Direct weight parameterization focuses on using firm characteristics to determine portfolio weights. This approach may exclude other relevant information or market factors that could be useful in optimizing the portfolio. In contrast, the two-step procedure attempts to capture a broader range of information through the estimation of moments.
+
+2. Model misspecification: The linear specification of portfolio weights in the PPP method is a simplification, and it may not accurately capture the true relationship between firm characteristics and optimal portfolio weights. This can lead to suboptimal portfolios if the assumed functional form does not accurately represent the underlying relationships.
+
+3. Estimation risk: Although the PPP method may lead to more stable estimates, it is still subject to estimation risk. The choice of firm characteristics and the estimation of the $\theta$ parameter can have a significant impact on the resulting portfolio weights, and errors in either of these components can affect portfolio performance.
+
+# Excercise 3
+
+We retrieve monthly stock returns from the **tidy_finance.sqlite** database and compute three lagged monthly firm characteristics: size, CAPM-beta, and momentum. We will then standardize these characteristics to have zero mean and unit standard deviation across all stocks at each month.
+
+
+```{r}
+
+# Connecting to database
+tidy_finance <- dbConnect(
+  SQLite(), "tidy_finance.sqlite",
+  extended_types = TRUE
+)
+
+# Retrieving the tables 'crsp_monthly', 'factors_ff_monthly' and 'beta'
+crsp_monthly <- tbl(tidy_finance, "crsp_monthly") |>
+  collect()
+
+factors_ff_monthly <- tbl(tidy_finance, "factors_ff_monthly") |>
+  collect()
+
+beta <- tbl(tidy_finance, "beta") |>
+  collect()
+
+```
+
+
+```{r}
+
+#Mutating the data to make 1 year lags for the momentum variable
+crsp_monthly_lags <- crsp_monthly |>
+  transmute(permno,
+    month_13 = month %m+% months(13),
+    mktcap
+  )
+
+# Joining the beta and crsp_monthly datasets
+crsp_monthly <- crsp_monthly |>
+  inner_join(crsp_monthly_lags,
+    by = c("permno", "month" = "month_13"),
+    suffix = c("", "_13")
+  ) |>
+  inner_join(beta,
+             by =c("permno", "month"))
+
+# Making the variables momentum_lag, size_lag and beta_lag
+data_portfolios <- crsp_monthly |>
+  mutate(
+    momentum_lag = mktcap_lag / mktcap_13,
+    size_lag = log(mktcap_lag),
+    beta_lag = lag(beta_monthly)
+  ) |>
+  drop_na(contains("lag"))
+
+# Adding a column 'n' that calculates the number of firms at time t, relative marketcap_lag and also standardizing the lagged variables
+data_portfolios <- data_portfolios |>
+  group_by(month) |>
+  mutate(
+    n = n(),
+    relative_mktcap = mktcap_lag / sum(mktcap_lag),
+    across(contains("lag"), ~ (. - mean(.)) / sd(.)),
+  ) |>
+  ungroup() |>
+  select(-mktcap_lag, -altprc)
+
+```
+
+# Excercise 4
+
+```{r}
+
+
+# Count the number of columns in the data_portfolios data frame that contain the string "lag"
+n_parameters <- sum(str_detect(
+  colnames(data_portfolios), "lag"
+))
+
+# Create a vector of length n_parameters with all values set to 1.5
+theta <- rep(1.5, n_parameters)
+
+# Give names to the elements of the theta vector using the names of the columns in data_portfolios that contain the string "lag"
+names(theta) <- colnames(data_portfolios)[str_detect(
+  colnames(data_portfolios), "lag"
+)]
+
+
+
+```
+
+```{r}
+
+compute_portfolio_weights <- function(theta,
+                                      data,
+                                      value_weighting = TRUE,
+                                      allow_short_selling = TRUE) {
+  data |>
+    group_by(month) |>
+    bind_cols(
+      characteristic_tilt = data |>
+        transmute(across(contains("lag"), ~ . / n)) |>
+        as.matrix() %*% theta |> as.numeric()
+    ) |>
+    mutate(
+      # Definition of benchmark weight
+      weight_benchmark = case_when(
+        value_weighting == TRUE ~ relative_mktcap,
+        value_weighting == FALSE ~ 1 / n
+      ),
+      # Parametric portfolio weights
+      weight_tilt = weight_benchmark + characteristic_tilt,
+      # Short-sell constraint
+      weight_tilt = case_when(
+        allow_short_selling == TRUE ~ weight_tilt,
+        allow_short_selling == FALSE ~ pmax(0, weight_tilt)
+      ),
+      # Weights sum up to 1
+      weight_tilt = weight_tilt / sum(weight_tilt)
+    ) |>
+    ungroup()
+}
+
+weights_crsp <- compute_portfolio_weights(
+  theta,
+  data_portfolios,
+  value_weighting = TRUE,
+  allow_short_selling = TRUE
+)
+
+# Defining the power utility function with gamma = 5
+power_utility <- function(r, gamma = 5) {
+  (1 + r)^(1 - gamma) / (1 - gamma)
+}
+
+# Defining the function to evaluate the portfolio
+evaluate_portfolio <- function(weights_crsp,
+                               full_evaluation = TRUE) {
+  evaluation <- weights_crsp |>
+    group_by(month) |>
+    summarize(
+      return_tilt = weighted.mean(ret_excess, weight_tilt),
+      return_benchmark = weighted.mean(ret_excess, weight_benchmark)
+    ) |>
+    pivot_longer(-month,
+      values_to = "portfolio_return",
+      names_to = "model"
+    ) |>
+    group_by(model) |>
+    left_join(factors_ff_monthly, by = "month") |>
+    summarize(tibble(
+      "Expected utility" = mean(power_utility(portfolio_return)),
+      "Average return" = 100 * mean(12 * portfolio_return),
+      "SD return" = 100 * sqrt(12) * sd(portfolio_return),
+      "Sharpe ratio" = sqrt(12) * mean(portfolio_return) / sd(portfolio_return),
+      "CAPM alpha" = coefficients(lm(portfolio_return ~ mkt_excess))[1],
+      "Market beta" = coefficients(lm(portfolio_return ~ mkt_excess))[2]
+    )) |>
+    mutate(model = str_remove(model, "return_")) |>
+    pivot_longer(-model, names_to = "measure") |>
+    pivot_wider(names_from = model, values_from = value)
+
+  if (full_evaluation) {
+    weight_evaluation <- weights_crsp |>
+      select(month, contains("weight")) |>
+      pivot_longer(-month, values_to = "weight", names_to = "model") |>
+      group_by(model, month) |>
+      transmute(tibble(
+        "Absolute weight" = abs(weight),
+        "Max. weight" = max(weight),
+        "Min. weight" = min(weight),
+        "Avg. sum of negative weights" = -sum(weight[weight < 0]),
+        "Avg. fraction of negative weights" = sum(weight < 0) / n()
+      )) |>
+      group_by(model) |>
+      summarize(across(-month, ~ 100 * mean(.))) |>
+      mutate(model = str_remove(model, "weight_")) |>
+      pivot_longer(-model, names_to = "measure") |>
+      pivot_wider(names_from = model, values_from = value)
+    evaluation <- bind_rows(evaluation, weight_evaluation)
+  }
+  return(evaluation)
+}
+
+
+```
+
+```{r}
+
+evaluate_portfolio(weights_crsp) |>
+  print(n = Inf)
+
+```
+
+
+
+
+
+
+
+
+
+
