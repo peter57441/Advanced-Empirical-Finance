@@ -21,7 +21,7 @@ editor_options:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE)
 options(scipen=999)
-options(digits = 2)
+options(digits = 4)
 ```
 
 
@@ -29,6 +29,9 @@ options(digits = 2)
 
 library(tidyverse)
 library(RSQLite)
+library(dplyr)
+library(knitr)
+library(kableExtra)
 
 ```
 
@@ -148,8 +151,8 @@ $$u_\gamma (r) = \frac{(1+r)^{(1-\gamma)}}{1-\gamma}$$
 
 With $\gamma=5$ and no constraints regarding short positions. We base the benchmark portfolio weights, $\bar{w}_{i,t}$ on the lagged market capitalization. In order to find the optimal vector $\hat{\theta}$ we use an optimizer that seeks to calibrate the weights of $\hat{\theta}$ that maximized the evaluated expected utility:
 
-$$E_t(U(r_{p,t+1})) = \frac{1}{T} \sum_{t=0}^{T-1} U \left(\sum_{i=1}^{N_t} \left() \bar{w}_{i,t} + \frac{1}{N_t}\theta' \hat{x}_{i,t} \right) r_{i,t+1} \right) $$
-Where $U$ is the power utility function given above.
+$$E_t(U(r_{p,t+1})) = \frac{1}{T} \sum_{t=0}^{T-1} U \left(\sum_{i=1}^{N_t} \left( \bar{w}_{i,t} + \frac{1}{N_t}\theta' \hat{x}_{i,t} \right) r_{i,t+1} \right) $$
+Where $U$ is the power utility function given above. We provide the estimated coefficients from $\hat{\theta}$ below.
 
 ```{r}
 
@@ -263,7 +266,6 @@ evaluate_portfolio <- function(weights_crsp,
 ```
 
 
-Optimal Parameter Choice
 
 
 ```{r}
@@ -298,9 +300,21 @@ optimal_theta <- optim(
   allow_short_selling = TRUE
 )
 
-optimal_theta$par
 
 ```
+
+
+```{r}
+
+# Create a data frame with the parameter names and values
+theta_df <- data.frame(Parameter = names(optimal_theta$par), Value = optimal_theta$par, row.names = NULL)
+
+# Use kable to format the data frame nicely
+kable(theta_df, format = "markdown", col.names = c("Parameter", "Value"), align = c("l", "c"), caption = "Optimal theta (Full sample)")
+
+
+```
+
 
 The resulting values of our optimal parameter choice are easy to
 interpret:
@@ -340,17 +354,28 @@ weights_crsp <- compute_portfolio_weights(
 )
 
 
-evaluate_portfolio(weights_crsp) |>
-  print(n = Inf)
+kable(evaluate_portfolio(weights_crsp), format = "markdown", caption = "Portfolio performance (full sample)")
 ```
 
 
-From the summary table of the performance of the two strategies we note that the "tilt" investment strategy achieves higher expected utility and a higher Sharpe ratio of 0.942. Which is more than double the benchmark portfolio of 0.44.
+From the summary table of the performance of the two strategies we note that the "tilt" investment strategy achieves higher expected utility and a higher Sharpe ratio of 0.942. Which is more than double the benchmark portfolio of 0.44. This suggests that deviating from the bench mark can improve risk adjusted returns.
 
 # Excercise 5
 
 
 In the initial implementation, there might be a look-ahead bias because we used the full dataset to estimate the parameter vector $\hat{\theta}$, which includes using future information to make decisions in the past. This can lead to overfitting and overly optimistic performance measures that are not representative of the true investment risks.
+
+In this analysis, we aim to evaluate the robustness of our parametric portfolio policy by conducting an out-of-sample experiment. This will allow us to assess the performance of the investment strategy in a more realistic scenario, where the policy is tested on data that wasn't used during the estimation process.
+
+Inspired by Brand et al. (2009), we split our dataset into two equal sub-samples: Sample 1, which spans from March 1961 to June 1993, and Sample 2, which covers July 1993 to December 2021. We then estimate the optimal portfolio policy for each sub-sample and use the resulting policy coefficients to form portfolios in the other sub-sample. This helps us ensure that our investment strategy is tested on unseen data, reducing the risk of overfitting and providing a more reliable evaluation of its performance.
+
+More specifically, we first estimate the optimal portfolio policy for Sample 1 by finding the $\theta$ values that maximize the expected utility of the portfolio. Next, we apply this policy to Sample 2 by forming portfolios using the firm characteristics observed at the beginning of each month and the policy coefficients estimated from Sample 1. The resulting returns from these portfolios in Sample 2 represent the out-of-sample performance for the policy estimated from Sample 1.
+
+We then repeat this process by estimating the optimal portfolio policy for Sample 2 and applying it to Sample 1, allowing us to evaluate the out-of-sample performance for the policy estimated from Sample 2.
+
+By conducting this out-of-sample experiment, we can assess the generalizability and robustness of our parametric portfolio policy. This approach provides a more convincing evaluation of the policy's performance than simply relying on in-sample metrics, as it demonstrates how well the policy performs on data it has not encountered during the estimation process. However it should be noted that splitting the data still contains two relatively large samples, and the model could thus still be considered unstable and is still prone to overfitting. 
+
+We report the results for the $\theta$ vectors and portfolio perfomances based on the two subsamples below:
 
 ```{r}
 
@@ -412,19 +437,55 @@ processed_sample_1_data <- compute_portfolio_weights(
 out_of_sample_results_sample_1 <- evaluate_portfolio(processed_sample_1_data)
 out_of_sample_results_sample_2 <- evaluate_portfolio(processed_sample_2_data)
 
-# Showing the thetas for each sub sample
-optimal_theta_sample_1$par  
-optimal_theta_sample_2$par
+# Create a data frame with the theta values
+theta_df <- data.frame(
+  Sample = c("Full sample", "Sample 1", "Sample 2"),
+  momentum_lag = c(optimal_theta$par[1], optimal_theta_sample_1$par[1], optimal_theta_sample_2$par[1]),
+  size_lag = c(optimal_theta$par[2], optimal_theta_sample_1$par[2], optimal_theta_sample_2$par[2]),
+  beta_lag = c(optimal_theta$par[3], optimal_theta_sample_1$par[3], optimal_theta_sample_2$par[3])
+)
+
+# Format the data frame as a Markdown table
+kable(theta_df, format = "markdown", col.names = c("", "momentum_lag", "size_lag", "beta_lag"), align = c("l", "c", "c", "c"), caption = "Optimal theta (subsamples)") 
+
 
 
 ```
+
+From the estimated $\theta$ vectors we notice that the estimated coefficients have changed compared to the full sample period. The major difference is the negative coefficient in sample 2 for *momentum_lag*, which suggests that in sample 2 (July 1993 - December 2021) stocks with lower momentum should receive more weight. This seems to be inconsistent with the "momentum effect" from the full sample and sample 1. This difference could be due to changes in market conditions or other factors during different time periods.
 
 ```{r}
 
-out_of_sample_results_sample_1
-out_of_sample_results_sample_2
+
+# Join the two tables on the "measure" column
+merged_results <- left_join(out_of_sample_results_sample_1, out_of_sample_results_sample_2, by = "measure")
+
+# Rename the columns to distinguish between the two samples
+merged_results <- merged_results %>%
+  rename(
+    sample_1_benchmark = benchmark.x,
+    sample_1_tilt = tilt.x,
+    sample_2_benchmark = benchmark.y,
+    sample_2_tilt = tilt.y
+  )
+
+
+
+merged_results %>%
+  select(measure, starts_with("sample")) %>%
+  kable(format = "markdown", col.names = c("Measure", "Sample 1 Benchmark", "Sample 1 Tilt", "Sample 2 Benchmark", "Sample 2 Tilt"), align = c("l", "c", "c", "c", "c"), caption = "Portfolio perfomance (subsamples)")
 
 ```
+
+
+From table 4 we notice that the "tilt" strategy now seem to perform worse than using the full sample as in excercise 4. This also could also indicate the look-ahead bias previously stated. We notice that in Sample 1 the "tilt" strategy still manages to deliver higher expected utility, average returns and Sharpe ratio than the benchmark value weighted portfolio. However the "tilt" strategy also imposes fairly greater standard deviation. In sample 2 however the "tilt" strategy now delivers lower expected utility than the benchmark. It also has lower Sharpe ratio and higher volatility. It still manages to deliver higher average returns. But since the volatility is much larger than the benchmark the risk adjusted returns now perform worse. 
+
+These results tells us that using an active trading strategy is ambigous. If we estimate $\theta$ on sample 2 and apply them to sample 1 we perform better than the benchmark but vice-versa we don't. It isn't clear if basing a trading strategy based on the PPP method is desirable or not. As stated before this could be do to the data sampling periods, regime changes and other factors that the model doesn't capture. Which always seem to be issues when trying to model/forecast economic behavior. 
+
+# Excercise 6
+
+
+
 
 
 
