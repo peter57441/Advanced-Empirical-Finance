@@ -20,6 +20,8 @@ editor_options:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE)
+options(scipen=999)
+options(digits = 2)
 ```
 
 
@@ -142,7 +144,12 @@ data_portfolios <- data_portfolios |>
 
 We now wish to estimate the parameter vector $\theta$ for an investor who aims to maximize the expected utility with a power utility function:
 
-$$$$
+$$u_\gamma (r) = \frac{(1+r)^{(1-\gamma)}}{1-\gamma}$$
+
+With $\gamma=5$ and no constraints regarding short positions. We base the benchmark portfolio weights, $\bar{w}_{i,t}$ on the lagged market capitalization. In order to find the optimal vector $\hat{\theta}$ we use an optimizer that seeks to calibrate the weights of $\hat{\theta}$ that maximized the evaluated expected utility:
+
+$$E_t(U(r_{p,t+1})) = \frac{1}{T} \sum_{t=0}^{T-1} U \left(\sum_{i=1}^{N_t} \left() \bar{w}_{i,t} + \frac{1}{N_t}\theta' \hat{x}_{i,t} \right) r_{i,t+1} \right) $$
+Where $U$ is the power utility function given above.
 
 ```{r}
 
@@ -295,6 +302,34 @@ optimal_theta$par
 
 ```
 
+The resulting values of our optimal parameter choice are easy to
+interpret:
+
+-   The expected utility increases by tilting the weights from a
+    portfolio with large-cap stocks toward smaller stocks (negative
+    coefficient for size)- this observation is consistent with the "size
+    effect", where smaller stock tends to outperform larger stocks on
+    average over long horizons. We need to remember that smaller-cap
+    stock also comes with higher risks, so the higher return of the
+    "size effect" observation isn't free of cost.
+
+-   We also want to tilt the weights from a portfolio with high beta
+    stocks to low beta stocks (negative coefficient for beta). This
+    means that stock with lower systematic risk are expected to yield
+    higher returns compared to larger-cap stocks. This suggestion can
+    strike as counterintuitive since we generally would associate higher
+    beta stocks with higher expected returns according to the CAPM.
+    However it is worth noticing that there is empirical evidence that
+    shows that low-beta stocks can outperform high-beta stocks - a
+    phenomenon that is known as the "low-beta anamoly".
+
+-   The results also suggests that we should shift the weights toward
+    past winners (positive coefficient for momentum), so past winners
+    will be expected to continue performing well, which is also aligned
+    with the well-known "momentum effect", where stocks that have
+    outperformed in the past tends to outperform in the future.
+
+
 ```{r}
 
 weights_crsp <- compute_portfolio_weights(
@@ -310,8 +345,86 @@ evaluate_portfolio(weights_crsp) |>
 ```
 
 
+From the summary table of the performance of the two strategies we note that the "tilt" investment strategy achieves higher expected utility and a higher Sharpe ratio of 0.942. Which is more than double the benchmark portfolio of 0.44.
+
+# Excercise 5
 
 
+In the initial implementation, there might be a look-ahead bias because we used the full dataset to estimate the parameter vector $\hat{\theta}$, which includes using future information to make decisions in the past. This can lead to overfitting and overly optimistic performance measures that are not representative of the true investment risks.
+
+```{r}
+
+
+
+
+
+# Step 1: Split the dataset into two equal sub-samples
+split_date <- as.Date("1993-07-01")
+sample_1_data <- data_portfolios |>
+  filter(month < split_date)
+sample_2_data <- data_portfolios |>
+  filter(month >= split_date)
+
+# Step 2: Estimate the optimal theta for each sub-sample
+optimal_theta_sample_1 <- optim(
+  par = theta,
+  compute_objective_function,
+  data = sample_1_data,
+  objective_measure = "Expected utility",
+  value_weighting = TRUE,
+  allow_short_selling = TRUE
+)
+
+optimal_theta_sample_2 <- optim(
+  par = theta,
+  compute_objective_function,
+  data = sample_2_data,
+  objective_measure = "Expected utility",
+  value_weighting = TRUE,
+  allow_short_selling = TRUE
+)
+
+# Step 3: Form a portfolio in the other sub-sample using the estimated theta
+processed_sample_2_data <- compute_portfolio_weights(
+  optimal_theta_sample_1$par,
+  sample_2_data,
+  value_weighting = TRUE,
+  allow_short_selling = TRUE
+)
+
+processed_sample_1_data <- compute_portfolio_weights(
+  optimal_theta_sample_2$par,
+  sample_1_data,
+  value_weighting = TRUE,
+  allow_short_selling = TRUE
+)
+
+
+
+
+
+```
+
+
+```{r}
+
+# Step 4: Evaluate the out-of-sample performance
+out_of_sample_results_sample_1 <- evaluate_portfolio(processed_sample_1_data)
+out_of_sample_results_sample_2 <- evaluate_portfolio(processed_sample_2_data)
+
+# Showing the thetas for each sub sample
+optimal_theta_sample_1$par  
+optimal_theta_sample_2$par
+
+
+```
+
+```{r}
+
+out_of_sample_results_sample_1
+out_of_sample_results_sample_2
+
+```
 
 
 
