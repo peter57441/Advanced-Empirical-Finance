@@ -106,12 +106,12 @@ crsp_monthly_lags <- crsp_monthly |>
 
 # Joining the beta and crsp_monthly datasets
 crsp_monthly <- crsp_monthly |>
+  inner_join(beta,
+             by =c("permno", "month")) |>
   inner_join(crsp_monthly_lags,
     by = c("permno", "month" = "month_13"),
     suffix = c("", "_13")
-  ) |>
-  inner_join(beta,
-             by =c("permno", "month"))
+  ) 
 
 # Making the variables momentum_lag, size_lag and beta_lag
 data_portfolios <- crsp_monthly |>
@@ -135,7 +135,14 @@ data_portfolios <- data_portfolios |>
 
 ```
 
+
+
+
 # Excercise 4
+
+We now wish to estimate the parameter vector $\theta$ for an investor who aims to maximize the expected utility with a power utility function:
+
+$$$$
 
 ```{r}
 
@@ -167,7 +174,7 @@ compute_portfolio_weights <- function(theta,
     group_by(month) |>
     bind_cols(
       characteristic_tilt = data |>
-        transmute(across(contains("lag"), ~ . / n)) |>
+        transmute(across(contains("_lag"), ~ . / n)) |>
         as.matrix() %*% theta |> as.numeric()
     ) |>
     mutate(
@@ -189,12 +196,6 @@ compute_portfolio_weights <- function(theta,
     ungroup()
 }
 
-weights_crsp <- compute_portfolio_weights(
-  theta,
-  data_portfolios,
-  value_weighting = TRUE,
-  allow_short_selling = TRUE
-)
 
 # Defining the power utility function with gamma = 5
 power_utility <- function(r, gamma = 5) {
@@ -212,7 +213,8 @@ evaluate_portfolio <- function(weights_crsp,
     ) |>
     pivot_longer(-month,
       values_to = "portfolio_return",
-      names_to = "model"
+      names_to = "model",
+      values_drop_na = TRUE
     ) |>
     group_by(model) |>
     left_join(factors_ff_monthly, by = "month") |>
@@ -225,13 +227,13 @@ evaluate_portfolio <- function(weights_crsp,
       "Market beta" = coefficients(lm(portfolio_return ~ mkt_excess))[2]
     )) |>
     mutate(model = str_remove(model, "return_")) |>
-    pivot_longer(-model, names_to = "measure") |>
+    pivot_longer(-model, names_to = "measure", values_drop_na = TRUE) |>
     pivot_wider(names_from = model, values_from = value)
 
   if (full_evaluation) {
     weight_evaluation <- weights_crsp |>
       select(month, contains("weight")) |>
-      pivot_longer(-month, values_to = "weight", names_to = "model") |>
+      pivot_longer(-month, values_to = "weight", names_to = "model", values_drop_na = TRUE) |>
       group_by(model, month) |>
       transmute(tibble(
         "Absolute weight" = abs(weight),
@@ -243,7 +245,7 @@ evaluate_portfolio <- function(weights_crsp,
       group_by(model) |>
       summarize(across(-month, ~ 100 * mean(.))) |>
       mutate(model = str_remove(model, "weight_")) |>
-      pivot_longer(-model, names_to = "measure") |>
+      pivot_longer(-model, names_to = "measure", values_drop_na = TRUE) |>
       pivot_wider(names_from = model, values_from = value)
     evaluation <- bind_rows(evaluation, weight_evaluation)
   }
@@ -253,15 +255,59 @@ evaluate_portfolio <- function(weights_crsp,
 
 ```
 
+
+Optimal Parameter Choice
+
+
 ```{r}
 
-evaluate_portfolio(weights_crsp) |>
-  print(n = Inf)
+compute_objective_function <- function(theta,
+                                       data,
+                                       objective_measure = "Expected utility",
+                                       value_weighting = TRUE,
+                                       allow_short_selling = TRUE) {
+  processed_data <- compute_portfolio_weights(
+    theta,
+    data,
+    value_weighting,
+    allow_short_selling
+  )
+
+  objective_function <- evaluate_portfolio(processed_data,
+    full_evaluation = FALSE
+  ) |>
+    filter(measure == objective_measure) |>
+    pull(tilt)
+
+  return(-objective_function)
+}
+
+optimal_theta <- optim(
+  par = theta,
+  compute_objective_function,
+  objective_measure = "Expected utility",
+  data = data_portfolios,
+  value_weighting = TRUE,
+  allow_short_selling = TRUE
+)
+
+optimal_theta$par
 
 ```
 
+```{r}
+
+weights_crsp <- compute_portfolio_weights(
+  optimal_theta$par,
+  data_portfolios,
+  value_weighting = TRUE,
+  allow_short_selling = TRUE
+)
 
 
+evaluate_portfolio(weights_crsp) |>
+  print(n = Inf)
+```
 
 
 
