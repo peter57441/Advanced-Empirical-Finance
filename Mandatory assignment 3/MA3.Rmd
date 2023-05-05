@@ -32,6 +32,7 @@ library(RSQLite)
 library(dplyr)
 library(knitr)
 library(kableExtra)
+library(ggplot2)
 
 ```
 
@@ -76,7 +77,9 @@ The Parametric Portfolio Policies (PPP) method has its pros and cons compared to
 
 # Excercise 3
 
-We retrieve monthly stock returns from the **tidy_finance.sqlite** database and compute three lagged monthly firm characteristics: size, CAPM-beta, and momentum. We will then standardize these characteristics to have zero mean and unit standard deviation across all stocks at each month.
+We retrieve monthly stock returns from the **tidy_finance.sqlite** database and compute three lagged monthly firm characteristics: *size_lag* (the log of the price per share times the number of outstanding), *beta_lag* (The CAPM-beta estimated using daily data on a rolling windows basis), and *momentum_lag* (The compunded return between months $t-2$ and $t-13$ for each firm). We will then standardize these characteristics to have zero mean and unit standard deviation across all stocks at each month for optimizing the vector $\hat{\theta}$.
+
+
 
 
 ```{r}
@@ -137,6 +140,44 @@ data_portfolios <- data_portfolios |>
   ) |>
   ungroup() |>
   select(-mktcap_lag, -altprc)
+
+```
+
+The figure below displays the means of the firm characteristics *momentum_lag*, *size_lag* and *beta_lag* every month for the entire sample period from the *crsp_monthly* dataset. The means are computed across firms each month. 
+
+```{r fig.height=5, fig.width=10}
+# Below we make the graphs for the non scaled variables used in the analysis.
+
+data_EDA <- crsp_monthly |>
+  mutate(
+    momentum_lag = mktcap_lag / mktcap_13,
+    size_lag = log(mktcap_lag),
+    beta_lag = lag(beta_monthly)
+  ) |>
+  drop_na(contains("lag"))
+
+# Calculate average values for momentum_lag, size_lag, and beta_lag over time
+averages <- data_EDA %>%
+  group_by(month) %>%
+  summarize(
+    avg_momentum_lag = mean(momentum_lag, na.rm = TRUE),
+    avg_size_lag = mean(size_lag, na.rm = TRUE),
+    avg_beta_lag = mean(beta_lag, na.rm = TRUE)
+  )
+
+# Reshape the data to a long format for plotting
+averages_long <- averages %>%
+  pivot_longer(-month, names_to = "variable", values_to = "value")
+
+# Plot the average values using ggplot2 with subplots
+ggplot(averages_long, aes(x = month, y = value)) +
+  geom_line() +
+  facet_wrap(~variable, scales = "free_y", ncol = 1) +
+  labs(title = "Figure 1: Average Values for Momentum_lag, Size_lag, and Beta_lag",
+       x = "Month",
+       y = "Value") +
+  theme_minimal()
+
 
 ```
 
@@ -343,6 +384,7 @@ interpret:
     with the well-known "momentum effect", where stocks that have
     outperformed in the past tends to outperform in the future.
 
+We provide the portfolio performance below:
 
 ```{r}
 
@@ -358,7 +400,7 @@ kable(evaluate_portfolio(weights_crsp), format = "markdown", caption = "Portfoli
 ```
 
 
-From the summary table of the performance of the two strategies we note that the "tilt" investment strategy achieves higher expected utility and a higher Sharpe ratio of 0.942. Which is more than double the benchmark portfolio of 0.44. This suggests that deviating from the bench mark can improve risk adjusted returns.
+From the summary table of the performance of the two strategies we note that the "tilt" investment strategy achieves higher expected utility and a higher Sharpe ratio of 0.942. Which is more than double the benchmark portfolio of 0.44. This suggests that deviating from the bench mark can improve risk adjusted returns for the full sample period.
 
 # Excercise 5
 
@@ -452,7 +494,7 @@ kable(theta_df, format = "markdown", col.names = c("", "momentum_lag", "size_lag
 
 ```
 
-From the estimated $\theta$ vectors we notice that the estimated coefficients have changed compared to the full sample period. The major difference is the negative coefficient in sample 2 for *momentum_lag*, which suggests that in sample 2 (July 1993 - December 2021) stocks with lower momentum should receive more weight. This seems to be inconsistent with the "momentum effect" from the full sample and sample 1. This difference could be due to changes in market conditions or other factors during different time periods.
+From the estimated $\theta$ vectors we notice that the estimated coefficients have changed compared to the full sample period. The major difference is the negative coefficient in sample 2 for *momentum_lag*, which suggests that in sample 2 (July 1993 - December 2021) stocks with lower momentum should receive more weight. This seems to be inconsistent with the "momentum effect" from the full sample and sample 1. This difference could be due to changes in market conditions or other factors during different time periods. We also note that the *momentum_lag* is estimated much higher in Sample 1 (The optimal coefficients trained on sample 1) which tells us that the momentum effect might've been much greater from 1963-1993 than the time period after. 
 
 ```{r}
 
