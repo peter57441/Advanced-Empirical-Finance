@@ -18,11 +18,9 @@ editor_options:
     wrap: 72
 ---
 
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE)
 ```
-
 
 ```{r include=FALSE}
 # Packages
@@ -40,7 +38,7 @@ library(kableExtra)
 
 # Machine Learning
 library(keras)
-library(Metrics)
+library(glmnet)
 
 # Other
 library(RSQLite)
@@ -50,13 +48,26 @@ library(knitr)
 
 ```
 
-
 # Excercise 1
 
-We load in the dataset and select the following variables based on figure 5 from the Gu et al (2020) paper. We choose among the variables that contributes the most to overall model contribution from figure 5 from the paper. We end up using the financial/stock characteristic variables chmom, max_ret, mom12m, mom1m, mvel1. We also include the macroeconomic variables bm, dfy, ntis and tbl. These variables constitutes our predictor variables $z_{i,t}$. We also make interactions between our financial and macroeconomic variables and include them in the analysis. Lastly we generate dummies for each industy classifier contained in the sic2 variables. We do this by implementing it as a recipe. Our dataset also include permno (stock identifier), month, ret_excess (excess returns for stock *i*) and mktcap_lag (lagged marketcap for stock *i*). The financial and macroeconomic variables are already lagged by one month while the excess returns are not. Thus we don't need to make any lagging of the variables in order to make our analysis. 
+We load in the dataset and select the following variables based on
+figure 5 from the Gu et al (2020) paper. We choose among the variables
+that contributes the most to overall model contribution from figure 5
+from the paper. We end up using the financial/stock characteristic
+variables chmom, max_ret, mom12m, mom1m, mvel1. We also include the
+macroeconomic variables bm, dfy, ntis and tbl. These variables
+constitutes our predictor variables $z_{i,t}$. We also make interactions
+between our financial and macroeconomic variables and include them in
+the analysis. Lastly we generate dummies for each industy classifier
+contained in the sic2 variables. We do this by implementing it as a
+recipe. Our dataset also include permno (stock identifier), month,
+ret_excess (excess returns for stock *i*) and mktcap_lag (lagged
+marketcap for stock *i*). The financial and macroeconomic variables are
+already lagged by one month while the excess returns are not. Thus we
+don't need to make any lagging of the variables in order to make our
+analysis.
 
 The dataset includes observations from January 1st 2005 and onward.
-
 
 ```{r cache=TRUE}
 
@@ -80,9 +91,6 @@ stock_characteristics_monthly <- tbl(tidy_finance, "stock_characteristics_monthl
                       
 ```
 
-
-
-
 ```{r cache=TRUE}
 
 
@@ -103,8 +111,8 @@ remove(tidy_finance)
 
 ```
 
-
-We perform EDA for the number of unique firms (permno) in each industry classification (sic2) for each month. 
+We perform EDA for the number of unique firms (permno) in each industry
+classification (sic2) for each month.
 
 ```{r fig.height=5, fig.width=10}
 
@@ -124,9 +132,8 @@ ggplot(no_industry, aes(fill=sic2, y=n, x=month)) +
 
 ```
 
-
-We notice that the total number of firms tend to decrease over time. While the ratio of industries somewhat seems to be the same over time.
-
+We notice that the total number of firms tend to decrease over time.
+While the ratio of industries somewhat seems to be the same over time.
 
 Lastly we show a summary table of our chosen variables.
 
@@ -152,10 +159,10 @@ stock_characteristics_monthly_summary
 
 ```
 
-
-One might note that there's a big difference between the minimum ret_excess and maximum ret_excess. While the median is only 0 and much closer to the minimum. 
-This could indicate that high returns only occur rarely. 
-
+One might note that there's a big difference between the minimum
+ret_excess and maximum ret_excess. While the median is only 0 and much
+closer to the minimum. This could indicate that high returns only occur
+rarely.
 
 ```{r}
 
@@ -169,53 +176,102 @@ rec <- recipe(ret_excess ~ ., data = stock_characteristics_monthly) |>
 
 ```
 
-
-
 # Excercise 2
 
-Gu et al. (2020) describe an asset’s excess return as an additive prediction error model the following way:
+Gu et al. (2020) describe an asset's excess return as an additive
+prediction error model the following way:
 
 $$r_{i,t+1} = E_t(r_{i,t+1}) + \varepsilon_{i,t+1} \quad \text{where} \quad E_t(r_{i,t+1}) = g(z_{i,t})$$
-Where $g(z_{i,t})$ is a function of the $P$-dimensional vector $z_{i,t}$ of predictor variables. 
+Where $g(z_{i,t})$ is a function of the $P$-dimensional vector $z_{i,t}$
+of predictor variables.
 
-As stated in the paper this would be considered a very flexible model, however it imposes some important restrictions. First the $g(\cdot)$ function depends neither on the individual stock or time period. It thus leverages of the information from the entire dataset. The functional form thus doesn't adjust by time period or for specific stocks. For example one variable could have a larger explanatory power in the beginning of the time period but much lesser towards the end. The effect from the predictor would still remain constant, and could also relate to overfitting the model.  The model also assumes that the prediction error $\varepsilon_{i,t+1}$ is additive and independent of the predictor variables, which may not hold in reality.
+As stated in the paper this would be considered a very flexible model,
+however it imposes some important restrictions. First the $g(\cdot)$
+function depends neither on the individual stock or time period. It thus
+leverages of the information from the entire dataset. The functional
+form thus doesn't adjust by time period or for specific stocks. For
+example one variable could have a larger explanatory power in the
+beginning of the time period but much lesser towards the end. The effect
+from the predictor would still remain constant, and could also relate to
+overfitting the model. The model also assumes that the prediction error
+$\varepsilon_{i,t+1}$ is additive and independent of the predictor
+variables, which may not hold in reality.
 
-Arbitrage Pricing Theory assumes that in a competitive and frictionless market, the return of an asset can be described by the equation:
+Arbitrage Pricing Theory assumes that in a competitive and frictionless
+market, the return of an asset can be described by the equation:
 
-$$R_i = a_i + b_i'f + \varepsilon_i$$
-Where $R_i$ is the return of asset $i$, $a_i$ is the intercept of the model, $b_i$ is the $(K \times 1)$ vector of factor loadings and $f$
- is a $(K \times 1)$ vector of common factor realizations. And $\varepsilon_i$ is white-noise i.e. $E(\varepsilon_i)=0$. Thus we can translate the APT model into an additive model as following:
- 
- $$E(R_i) = a_i + b_i'f = g(z_i)$$
-Where we have that $z_i \equiv [a_i,f]'$ is the $(K + 1 \times 1)$ vector of factors. For the APT model we have a linear function (i.e the form of $g(\cdot)$ is linear), and we could thus estimate the parameters with a regression. In this case of time series analysis we also have a time aspect, where we want to estimate excess returns: $r_i = R_i-R_{rf}$ at time $t$ and we can then translate the equation into:
+$$R_i = a_i + b_i'f + \varepsilon_i$$ Where $R_i$ is the return of asset
+$i$, $a_i$ is the intercept of the model, $b_i$ is the $(K \times 1)$
+vector of factor loadings and $f$ is a $(K \times 1)$ vector of common
+factor realizations. And $\varepsilon_i$ is white-noise i.e.
+$E(\varepsilon_i)=0$. Thus we can translate the APT model into an
+additive model as following:
+
+$$E(R_i) = a_i + b_i'f = g(z_i)$$ Where we have that
+$z_i \equiv [a_i,f]'$ is the $(K + 1 \times 1)$ vector of factors. For
+the APT model we have a linear function (i.e the form of $g(\cdot)$ is
+linear), and we could thus estimate the parameters with a regression. In
+this case of time series analysis we also have a time aspect, where we
+want to estimate excess returns: $r_i = R_i-R_{rf}$ at time $t$ and we
+can then translate the equation into:
 
 $$r_{i,t+1} = E(r_{i,t+1}) + \varepsilon_{i,t+1} = g(z_{i,t}) + \varepsilon_{i,t+1}$$
 This model shares some of the same issues as stated above.
 
-
 # Excercise 3
-
 
 ## Hyperparameter tuning
 
-Hyperparameter selection, also known as hyperparameter tuning or optimization, is a crucial step in the machine learning process. The primary purpose of this procedure is to find the optimal set of hyperparameters that improve the model's performance on unseen data. Hyperparameters are external configurations of the model that cannot be learned during the training process. They directly affect the behavior of the model and its ability to generalize. And they're used to counterfeit overfitting.
+Hyperparameter selection, also known as hyperparameter tuning or
+optimization, is a crucial step in the machine learning process. The
+primary purpose of this procedure is to find the optimal set of
+hyperparameters that improve the model's performance on unseen data.
+Hyperparameters are external configurations of the model that cannot be
+learned during the training process. They directly affect the behavior
+of the model and its ability to generalize. And they're used to
+counterfeit overfitting.
 
-The objective function in hyperparameter selection measures the performance of the model with a specific set of hyperparameters on the validation data. The goal is to minimize (or maximize) this objective function, depending on the context, by searching through various hyperparameter combinations. For instance consider the L2 regularization objective function. Where the goal is to minimese the squared residuals of predictions (MSPE).
+The objective function in hyperparameter selection measures the
+performance of the model with a specific set of hyperparameters on the
+validation data. The goal is to minimize (or maximize) this objective
+function, depending on the context, by searching through various
+hyperparameter combinations. For instance consider the L2 regularization
+objective function. Where the goal is to minimese the squared residuals
+of predictions (MSPE).
 
 $$\mathcal{L} (\theta) = \frac{1}{NT} \sum^N_{i=1} \sum^T_{t=1} (r_{i,t+1}-g(z_{i,t};\theta))^2$$
 
-Fitting a model based on the entire dataset without a separate validation or test set can be unwise in certain circumstances, especially when the primary goal is to achieve good generalization performance. Using the entire dataset for training can lead to overfitting, where the model performs well on the training data but poorly on unseen data. This occurs because the model has learned the noise in the data and fails to capture the underlying pattern.
+Fitting a model based on the entire dataset without a separate
+validation or test set can be unwise in certain circumstances,
+especially when the primary goal is to achieve good generalization
+performance. Using the entire dataset for training can lead to
+overfitting, where the model performs well on the training data but
+poorly on unseen data. This occurs because the model has learned the
+noise in the data and fails to capture the underlying pattern.
 
-1. Limitations or alternatives to selecting tuning parameters from a validation sample:
+1.  Limitations or alternatives to selecting tuning parameters from a
+    validation sample:
 
-2. Limited data: If the dataset is small, setting aside a portion of it for validation may result in insufficient data for training, limiting the model's ability to learn the underlying pattern effectively.
+2.  Limited data: If the dataset is small, setting aside a portion of it
+    for validation may result in insufficient data for training,
+    limiting the model's ability to learn the underlying pattern
+    effectively.
 
-3. Overfitting to the validation set: If the hyperparameter optimization process is too extensive, the model may overfit to the validation set, resulting in poor generalization performance on unseen data.
+3.  Overfitting to the validation set: If the hyperparameter
+    optimization process is too extensive, the model may overfit to the
+    validation set, resulting in poor generalization performance on
+    unseen data.
 
-Computationally expensive: Exhaustive search methods like grid search can be computationally expensive, especially when the search space is large, and the model takes a long time to train.
+Computationally expensive: Exhaustive search methods like grid search
+can be computationally expensive, especially when the search space is
+large, and the model takes a long time to train.
 
-Making the train-validation-test split with 20% of the last observations as test data and make 20% of the train data into validation. That is we keep data points from 2017-03-01 and onward as test data. We keep from 2014-07-01 until 2017-02-01 as validation data. While we keep the remaining data starting from 2005-01-01 as training data. We keep the splits constant for this assignment.  
-
+Making the train-validation-test split with 20% of the last observations
+as test data and make 20% of the train data into validation. That is we
+keep data points from 2017-03-01 and onward as test data. We keep from
+2014-07-01 until 2017-02-01 as validation data. While we keep the
+remaining data starting from 2005-01-01 as training data. We keep the
+splits constant for this assignment.
 
 ```{r}
 
@@ -245,32 +301,56 @@ data_test <- bake(prep_test, new_data = test_split)
 
 ```
 
-
-
-
 # Excercise 4
+
+We would like to use Elastic Net Regression and Neural Networks. The
+reason behind choosing these models is that the Elastic Net is the least
+complex model of the three (Neural Network, Random Forest, Elastic Net)
+and Neural Network is the most complex one of the three. In addition
+Elastic Net is a linear method whereas the two other methods are
+nonlinear. So by selecting Elastic Net and Neural Network we cover
+different models in regards of parametrization and model complexity.
 
 ## Neural Network
 
-Neural networks are a class of machine learning models inspired by the structure and function of the human brain. They consist of interconnected layers of artificial neurons, also called nodes, with each layer transforming the input data into more abstract representations. A typical neural network consists of an input layer, one or more hidden layers, and an output layer. Each connection between neurons has a weight that determines the strength of the connection. The input data is fed into the input layer, and the output layer provides the final prediction. Activation functions, such as ReLU (Rectified Linear Unit) or sigmoid, are used in the neurons to introduce non-linearity, which allows the network to learn complex patterns.
+Neural networks are a class of machine learning models inspired by the
+structure and function of the human brain. They consist of
+interconnected layers of artificial neurons, also called nodes, with
+each layer transforming the input data into more abstract
+representations. A typical neural network consists of an input layer,
+one or more hidden layers, and an output layer. Each connection between
+neurons has a weight that determines the strength of the connection. The
+input data is fed into the input layer, and the output layer provides
+the final prediction. Activation functions, such as ReLU (Rectified
+Linear Unit) or sigmoid, are used in the neurons to introduce
+non-linearity, which allows the network to learn complex patterns.
 
-The objective function  measures the difference between the model's predictions $\hat{y}_t$ and the actual target values $y_t$. In a regression problem, a common objective function is the Mean Squared Error (MSE), which calculates the average of the squared differences between the predicted and actual values, $MSE = \frac{1}{N} \sum^N_{i=1} (\hat{y}_t - y_t)^"$. The goal of training the neural network is to minimize the objective function by adjusting the weights and biases through a process called backpropagation. 
+The objective function measures the difference between the model's
+predictions $\hat{y}_t$ and the actual target values $y_t$. In a
+regression problem, a common objective function is the Mean Squared
+Error (MSE), which calculates the average of the squared differences
+between the predicted and actual values,
+$MSE = \frac{1}{N} \sum^N_{i=1} (\hat{y}_t - y_t)^"$. The goal of
+training the neural network is to minimize the objective function by
+adjusting the weights and biases through a process called
+backpropagation.
 
-The hyperparameters to be chosen before training the model in Neural Networks include:
+The hyperparameters to be chosen before training the model in Neural
+Networks include:
 
-- Number of hidden layers
-- Number of neurons at each hidden layer
-- Activation function used at each layer
-- Learning rate for backpropagation
-- Regularization such as L1 or L2
-- Epochs
-- Bath size
+-   Number of hidden layers
+-   Number of neurons at each hidden layer
+-   Activation function used at each layer
+-   Learning rate for backpropagation
+-   Regularization such as L1 or L2
+-   Epochs
+-   Bath size
 
-A major drawback of Neural Network is their computational load. In this paper we oncly consider a NN with 2 layers and relatively few neurons at each layer. Since the dataset is quite vast and optimization takes a very long time. Below we provide a summary table of the different hyperparameters we have tuned on.
-
-
-
-
+A major drawback of Neural Network is their computational load. In this
+paper we oncly consider a NN with 2 layers and relatively few neurons at
+each layer. Since the dataset is quite vast and optimization takes a
+very long time. Below we provide a summary table of the different
+hyperparameters we have tuned on.
 
 ```{r}
 # #############################
@@ -316,8 +396,6 @@ A major drawback of Neural Network is their computational load. In this paper we
 
 ```
 
-
-
 ```{r}
 
 # Display the results in a table
@@ -340,15 +418,12 @@ NN_tuning_summary |> knitr::kable(booktabs = TRUE, digits = 5, caption = "Neural
 
 ```
 
-
 Our chosen network is structured as following:
 
-- 2 hidden layers with 5 neurons each
-- Sigmoid activation function in the hidden layers with a linear in the output.
-- L2 regularization with $\lambda = 0.01$
-
-
-
+-   2 hidden layers with 5 neurons each
+-   Sigmoid activation function in the hidden layers with a linear in
+    the output.
+-   L2 regularization with $\lambda = 0.01$
 
 ```{r}
 
@@ -371,12 +446,7 @@ NN_fit <- NN_model |>
 
 ```
 
-# Excercise 5
-
-We predict our final fitted models on our test data. Then we calculate the predicted excess returns for each month into deciles, and then each month reconstitute portfolios using value weights. We then construct a "zero-net-investment" portfolio that buys the highest decile and sells the lowest. 
-
 ```{r}
-
 
 # Generate predictions for the withheld dataset using the Neural Network model
 NN_test_predictions <- NN_model |> predict(data_test |>
@@ -384,13 +454,146 @@ NN_test_predictions <- NN_model |> predict(data_test |>
                                               as.matrix())
 
 
+```
+
+## Elastic Net Regression
+
+To avoid the problem of overfitting, we can reduce the number of
+predictors we consider in our statistical model. We do this by adding a
+penalty term to the model's objective function, which makes it less
+likely to fit noise, while preserving its signal fit. This is called
+regularization. Elastic Net is a "penalized linear model," which is
+similar to the simple linear model but includes the penalty term. The
+penalty function we use is called "Elastic Net" and takes two
+hyperparameters ($\lambda$ and $\alpha$). The Elastic Net penalty is
+given as:
+
+$$\phi(\theta;\lambda,\alpha) = \lambda(1-\alpha)\sum_{j=1}^P |\theta_j| + \frac{1}{2} \lambda\alpha \sum_{j=1}^P \theta^2_j$$
+
+The Elastic Net is in reality a hybrid model of two well-known
+regularizers as special cases:
+
+1.  When $\alpha=0$, the penalty function corresponds to the Lasso and
+    uses an absolute value, or $L_1$ parameter penalization. The Lasso
+    imposes sparsity on the model, which means that it can set some
+    coefficients to exactly zero, effectively excluding some predictors
+    from the model. This makes the Lasso a useful variable selection
+    method.
+
+2.  When $\alpha=1$, the penalty function corresponds to ridge
+    regression and uses an $L_2$ parameter penalization. Ridge
+    regression shrinks all the coefficient estimates towards zero, but
+    does not force any coefficients to be exactly zero. This helps
+    prevent coefficients from becoming inappropriately large in
+    magnitude.
+
+For intermediate values of $\alpha$ between 0 and 1, the Elastic Net
+encourages both shrinkage and variable selection, which makes it a first
+line defense in combating overfitting. Based on our model fit we end up
+with the following parameters.
+
+```{r}
+
+# Find index of column containing the response variable for train
+response_col_train <- grep("ret_excess", names(data_train))
+
+# Extract predictor and response variables for train
+x_train <- as.matrix(data_train[, -response_col_train])
+y_train <- as.matrix(data_train[, response_col_train])
+
+
+# Find index of column containing the response variable for val
+response_col_val <- grep("ret_excess", names(data_val))
+
+# Extract predictor and response variables for val
+x_val <- as.matrix(data_val[, -response_col_val])
+y_val <- as.matrix(data_val[, response_col_val])
+
+
+# Find index of column containing the response variable for test
+response_col_test <- grep("ret_excess", names(data_test))
+
+# Extract predictor and response variables for test
+x_test <- as.matrix(data_test[, -response_col_test])
+y_test <- as.matrix(data_test[, response_col_test])
+
 
 ```
+
+```{r}
+
+# Hyperparameter tuning
+alpha_values <- seq(0,1,by=0.1)
+lambda_values <- seq(0.01,1,by=0.1)
+
+mse_matrix <- matrix(NA,nrow=length(alpha_values),ncol=length(lambda_values))
+
+for (i in 1:length(alpha_values)) {
+  for (j in 1:length(lambda_values)) {
+    
+    # Fit elastic net model with current alpha and lambda values
+    model <- glmnet(x_train,y_train,alpha=alpha_values[i],lambda=lambda_values[j])
+    
+    # Calculate mean squared error on validation set
+    y_pred <- predict(model,newx=x_val)
+    mse <- mean((y_val-y_pred)^2)
+    
+    # Store MSE value in matrix
+    mse_matrix[i,j] <- mse
+  }
+}
+
+
+
+```
+
+```{r}
+
+# Choose best hyperparameters based on validation set performance
+min_mse <- min(mse_matrix)
+min_index <- which(mse_matrix==min_mse,arr.ind=TRUE)
+best_alpha <- alpha_values[min_index[1]]
+best_lambda <- lambda_values[min_index[2]]
+
+# Fit final elastic net model with chosen hyperparameters using all training data
+EN_model <- glmnet(x_train,y_train,alpha=best_alpha,lambda=best_lambda)
+
+# Calculate test set performance
+y_pred <- predict(EN_model,newx=x_test)
+mse <- mean((y_test-y_pred)^2)
+
+# Print results
+cat("Best alpha value:",best_alpha,"\n")
+cat("Best lambda value:",best_lambda,"\n")
+cat("Test set mean squared error:",mse,"\n")
+
+```
+
+# Excercise 5
+
+We predict our final fitted models on our test data. Then we calculate
+the predicted excess returns for each month into deciles, and then each
+month reconstitute portfolios using value weights. We then construct a
+"zero-net-investment" portfolio that buys the highest decile and sells
+the lowest.
+
+```{r}
+
+# Generate predictions for the withheld dataset using the Elastic Net model
+
+EN_test_predictions <- EN_model |> predict(data_test |>
+                                              select(-ret_excess) |>
+                                              as.matrix())
+
+```
+
 ```{r}
 # Add the predictions to the test dataset
 
 
 test_split$NN_predictions <- NN_test_predictions
+
+test_split$EN_predictions <- EN_test_predictions
 
 test_split <- test_split |>
   arrange(permno, month) |>
@@ -398,8 +601,6 @@ test_split <- test_split |>
 
 
 ```
-
-
 
 ```{r}
 
@@ -412,10 +613,10 @@ calculate_decile <- function(predictions) {
 }
 
 # Calculate deciles for each model's predictions
-test_split <- test_split %>%
-  group_by(month) %>%
-  mutate(NN_decile = calculate_decile(NN_predictions)) #,
-         # second_model_decile = calculate_decile(second_model_predictions))
+test_split <- test_split |>
+  group_by(month) |>
+  mutate(NN_decile = calculate_decile(NN_predictions),
+         EN_decile = calculate_decile(EN_predictions))
 
 # Calculate value weights for each stock
 test_split <- test_split %>%
@@ -425,13 +626,14 @@ test_split <- test_split %>%
 
 # Calculate the returns of the zero-net-investment portfolio for each model
 test_split <- test_split %>%
-  mutate(NN_zero_net_investment = ifelse(NN_decile == 10, ret_excess, ifelse(NN_decile == 1, -ret_excess, 0))) #,
-         # second_model_zero_net_investment = ifelse(second_model_decile == 10, ret_excess, ifelse(second_model_decile == 1, -ret_excess, 0)))
+  mutate(NN_zero_net_investment = ifelse(NN_decile == 10, ret_excess, ifelse(NN_decile == 1, -ret_excess, 0)),
+         EN_zero_net_investment = ifelse(NN_decile == 10, ret_excess, ifelse(EN_decile == 1, -ret_excess, 0)))
 
 # Calculate the monthly returns of the zero-net-investment portfolios
 monthly_returns <- test_split %>%
   group_by(month) %>%
-  summarize(NN_portfolio_return = sum(NN_zero_net_investment * value_weight)) #,
+  summarize(NN_portfolio_return = sum(NN_zero_net_investment * value_weight),
+            EN_portfolio_return = sum(EN_zero_net_investment * value_weight)) #,
             # second_model_portfolio_return = sum(second_model_zero_net_investment * value_weight))
 
 
@@ -439,8 +641,7 @@ monthly_returns <- test_split %>%
 
 ```
 
-
-Below we summarize the perfomance of the portfolio
+Below we summarize the perfomance of the portfolios.
 
 ```{r}
 
@@ -457,11 +658,16 @@ combined_returns <- left_join(monthly_returns, market_returns, by = "month")
 # Calculate descriptive statistics for the monthly returns
 combined_returns_summary <- combined_returns %>%
   mutate(NN_cumulative_return = cumprod(1 + NN_portfolio_return),
-         market_cumulative_return = cumprod(1 + market_return)) %>%
+         market_cumulative_return = cumprod(1 + market_return),
+         EN_cumulative_return = cumprod(1 + EN_portfolio_return)) %>%
   summarise(mean_NN_return = mean(NN_portfolio_return),
             sd_NN_return = sd(NN_portfolio_return),
             sharpe_ratio_NN = mean_NN_return / sd_NN_return,
             cumulative_NN_return = last(NN_cumulative_return),
+            mean_EN_return = mean(EN_portfolio_return),
+            sd_EN_return = sd(EN_portfolio_return),
+            sharpe_ratio_EN = mean_EN_return / sd_EN_return,
+            cumulative_EN_return = last(EN_cumulative_return),
             mean_market_return = mean(market_return),
             sd_market_return = sd(market_return),
             sharpe_ratio_market = mean_market_return / sd_market_return,
@@ -469,14 +675,18 @@ combined_returns_summary <- combined_returns %>%
 
 # Calculating alpha for the portfolios
 alpha_NN <- as.numeric(lm(NN_portfolio_return ~ market_return, data = combined_returns)$coefficients[1])
+alpha_EN <- as.numeric(lm(EN_portfolio_return ~ market_return, data = combined_returns)$coefficients[1])
+alpha_market <- "none"
+
+combined_returns_summary <- matrix(c(combined_returns_summary$mean_NN_return, combined_returns_summary$sd_NN_return, combined_returns_summary$sharpe_ratio_NN, combined_returns_summary$cumulative_NN_return, alpha_NN, combined_returns_summary$mean_EN_return, combined_returns_summary$sd_EN_return, combined_returns_summary$sharpe_ratio_EN, combined_returns_summary$cumulative_EN_return, alpha_EN, combined_returns_summary$mean_market_return, combined_returns_summary$sd_market_return, combined_returns_summary$sharpe_ratio_market, combined_returns_summary$cumulative_market_return, alpha_market), ncol = 5)
 
 
-combined_returns_summary <- matrix(c(combined_returns_summary$mean_NN_return, combined_returns_summary$sd_NN_return, combined_returns_summary$sharpe_ratio_NN, combined_returns_summary$cumulative_NN_return, combined_returns_summary$mean_market_return, combined_returns_summary$sd_market_return, combined_returns_summary$sharpe_ratio_market, combined_returns_summary$cumulative_market_return), ncol = 4)
+colnames(combined_returns_summary) <- c("Mean", "SD", "Sharpe Ratio", "cummulative returns", "alpha")
+rownames(combined_returns_summary) <- c("NN", "EN", "Market")
 
-colnames(combined_returns_summary) <- c("Mean", "SD", "Sharpe Ratio", "cummulative returns")
-rownames(combined_returns_summary) <- c("NN", "Market")
+combined_returns_summary |> knitr::kable(booktabs = TRUE, digits = 2, caption = "Portfolio perfomances") |> kable_paper("hover", full_width = T)
 
-combined_returns_summary |> knitr::kable(booktabs = TRUE, digits = 3, caption = "Portfolio perfomances") |> kable_paper("hover", full_width = T)
+
 
 
 
@@ -490,13 +700,32 @@ combined_returns_summary |> knitr::kable(booktabs = TRUE, digits = 3, caption = 
 combined_returns_plot <- ggplot(combined_returns, aes(x = month)) +
   geom_line(aes(y = NN_portfolio_return, color = "NN Portfolio Return")) +
   geom_line(aes(y = market_return, color = "Market Return")) +
+  geom_line(aes(y = EN_portfolio_return, color = "EN Portfolio Return"))
   labs(title = "Figure 2: Monthly Returns Performance",
        x = "Month",
        y = "Returns") +
-  scale_color_manual(values = c("NN Portfolio Return" = "blue", "Market Return" = "red")) 
+  scale_color_manual(values = c("NN Portfolio Return" = "blue", "Market Return" = "red", "EN Portfolio Return" = "green")) 
 
 plot(combined_returns_plot)
 ```
 
+It should be noted that the table presented may require additional
+interpretation. There may be some error in the way we have calculated
+the metrics. However the plot provides a comprehensive overview of the
+results.
 
+From the table we can concluded that the market have the highest mean
+performance as well as the highest sharpe ratio. This is also what we
+can conclude from the plot. From the plot our analysis suggests that the
+market exhibits the highest level of performance compared to the neural
+network and elastic net regression models, which perform relatively
+poorly. Additionally, we observed that the market exhibits higher
+volatility levels than the elastic net, which displays the lowest level
+of volatility. Notably, we also see that the the neural network and
+elastic net portfolio returns follows the market returns, which is not
+very surprising.
 
+We may very well have made some mistakes in our code for the
+construction for the "zero-net-investment" portfolios, which explains
+our quite vague results. Which explains why the machine learning methods
+underperfoms this much.
