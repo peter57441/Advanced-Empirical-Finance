@@ -40,7 +40,7 @@ library(ggplot2)
 
 # Excercise 1
 
-Parametric Portfolio Policies is a method introduced by Brandt et al. (2009) as an alternative to the traditional mean-variance approach of Markowitz (1952). The method simplifies the portfolio optimization process by leveraging firm characteristics, such as market capitalization, book-to-market ratio, or lagged return, which are related to the stock's expected return, variance, and covariance with other stocks.
+Parametric Portfolio Policies is a method introduced by Brandt et al. (2009)^[*Parametric Portfolio Policies: Exploiting Characteristics in the Cross-Section of Equity Returns* Brandt et al. 2009] as an alternative to the traditional mean-variance approach of Markowitz (1952)^[*Portfolio Selection* Markowitz 1952]. The method simplifies the portfolio optimization process by leveraging firm characteristics, such as market capitalization, book-to-market ratio, or lagged return, which are related to the stock's expected return, variance, and covariance with other stocks.
 
 The intuition behind the parameter vector $\theta$ is to capture the relationship between a stock's firm characteristics and its portfolio weight. $\theta$ represents a vector of coefficients that, when combined with the standardized firm characteristics ($\hat{x}_{i,t}$), generates the optimal portfolio weights for each stock. This linear specification allows for a more stable and less complex optimization process compared to the mean-variance approach.
 
@@ -54,6 +54,8 @@ $$w_{i,t} = \bar{w}_{i,t} + \frac{1}{N_t}\theta' \hat{x}_{i,t}$$
 Here, $\bar{w}_{i,t}$ represents the weight of a benchmark portfolio (in this case, the market capitalization-weighted portfolio), and $\hat{x}_{i,t}$ are the cross-sectionally standardized firm characteristics of stock $i$.
 
 Describing the portfolio policy as "active portfolio management relative to a performance benchmark" makes sense because the Parametric Portfolio Policies method adjusts the benchmark portfolio weights based on the firm characteristics. The market capitalization-weighted portfolio serves as a starting point, and the parametrized weights $\frac{1}{N_t}\theta' \hat{x}_{i,t}$ represent the active management component of the portfolio. By estimating $\theta$ and incorporating it into the portfolio weights, investors can create a portfolio that actively adjusts to changes in firm characteristics, which can potentially lead to better risk-adjusted returns compared to a passive benchmark portfolio.
+
+\newpage
 
 # Excercise 2
 
@@ -524,9 +526,62 @@ From table 4 we notice that the "tilt" strategy now seem to perform worse than u
 
 These results tells us that using an active trading strategy is ambigous. If we estimate $\theta$ on sample 2 and apply them to sample 1 we perform better than the benchmark but vice-versa we don't. It isn't clear if basing a trading strategy based on the PPP method is desirable or not. As stated before this could be do to the data sampling periods, regime changes and other factors that the model doesn't capture. Which always seem to be issues when trying to model/forecast economic behavior. 
 
+
 # Excercise 6
 
+In this section we want to propose a procedure that should reduce the
+deviation from the benchmark portfolio in an economically meaningful way
+and have a control over the impact of turnover on portfolio performance.
+We would like to look at the objective function.
 
+$$E_t\left(u(r_{p, t+1})\right) = \frac{1}{T}\sum\limits_{t=0}^{T-1}u\left(\sum\limits_{i=1}^{N_t}\left(\bar{w}_{i,t} + \frac{1}{N_t}\theta'\hat{x}_{i,t}\right)r_{i,t+1}\right)$$
+
+To reduce the deviation from the benchmark portfolio in an economically
+meaningful way, we can modify the objective function by adding a penalty
+term that incorporates the impact of turnover. Turnover refers to the
+frequency of trading or the amount of change in the portfolio's
+holdings. High turnover can lead to increased trading costs, which can
+negatively impact portfolio performance.
+
+To account for turnover, we can add a penalty term to the objective
+function that penalizes high turnover. The modified objective function
+can be expressed as:
+
+$$E_t\left(u(r_{p, t+1})\right) - \lambda_1 \sum\limits_{t=0}^{T-1}\sum\limits_{i=1}^{N_t} \left| w_{i,t} - \bar{w}_{i,t} \right|^2 - \lambda_2 \sum\limits_{t=0}^{T-1}\sum\limits_{i=1}^{N_t} \left| w_{i,t} - w_{i,t-1} \right|^2
+$$
+
+In this equation:
+
+-   $E_t\left(u(r_{p, t+1})\right)$ is the expected utility of the
+    portfolio returns at time $t+1$.
+
+-    $w_{i,t}$ represents the weight of asset $i$ in the portfolio at
+    time $t$.
+
+-    $\bar{w}_{i,t}$ represents the weight of asset $i$ in the benchmark
+    portfolio at time $t$.
+
+-   $\lambda_1$ and $\lambda_2$ are penalty factors that control the
+    trade-offs between maximizing expected utility, minimizing deviation
+    from the benchmark, and minimizing turnover.
+
+-   The first penalty term,
+    $\sum\limits_{t=0}^{T-1}\sum\limits_{i=1}^{N_t} \left| w_{i,t} - \bar{w}_{i,t} \right|^2$,
+    discourages large deviations from the benchmark portfolio.
+
+-    The second penalty term,
+    $\sum\limits_{t=0}^{T-1}\sum\limits_{i=1}^{N_t} \left| w_{i,t} - w_{i,t-1} \right|^2$,
+    penalizes high turnover by taking into account the changes in
+    portfolio weights between consecutive periods.
+
+The objective is to find the optimal portfolio weights $w_{i,t}$ that
+maximize the modified objective function, while considering the
+trade-offs between expected utility, deviation from the benchmark, and
+turnover. We can determine the optimal values of the penalty factors
+$\lambda_1$ and $\lambda_2$ by using optimization techniques. By
+incorporating a penalty on the impact of the turnover in the objective
+function, and a penalty on the deviation from the benchmark portfolio we
+obtain a procedure that solves the problem at hand.
 
 
 
