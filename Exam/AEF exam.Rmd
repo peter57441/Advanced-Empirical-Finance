@@ -1,0 +1,185 @@
+---
+title: "AEF exam"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-06-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE)
+```
+
+
+```{r}
+library(lubridate)
+library(tidyverse)
+library(zoo)
+```
+
+
+# Excercise 1
+
+## 1.1
+
+## 1.2
+
+The realized covariance is a measure that allows us to estimate the covariance of two assets' returns using high-frequency data. Given the availability of minute-level data, the realized covariance within a trading day can be calculated as follows:
+
+$$\mathrm{Cov}(i,j) = \sum \left( r_{i,t} - \hat{\mu}_i \right) \cdot \left( r_{j,t} - \hat{\mu}_j \right) $$
+Where $r_{i,t}$ and $r_{j,t}$ are the returns of asset $i$ and $j$ respectively at minute $t$ of the day. $\hat{\mu}_i$ and $\hat{\mu}_j$ are the mean of the returns for stock $i$ and $j$ within a trading day. This gives a daily realized covariance matrix, with each element being the realized covariance between two assets calculated as above.
+
+The realized volatility for asset $i$ in a trading day is given by: 
+
+$$RV(i) = \sqrt{\sum r_{i,t}^2}$$
+That is the sum of the squared returns log returns during a trading day. 
+
+The rolling-window standard deviation for the daily returns of stock i over the last $N$ trading days is calculated as:
+
+$$SD(i) = \sqrt{\frac{1}{T-1} \sum \left(r_{i,t} - \hat{\mu}_i \right)^2}$$
+
+Note that $N$ is a rolling window and in our case $N=100$ for the last 100 trading days. In this case $r_{i,t}$ and $\hat{\mu}_i$ are the daily returns and means for the past 100 days. 
+
+```{r}
+# Load the intraday_returns data
+intraday_returns <- read_csv("intraday_returns.csv")
+
+# Convert the ts column to a datetime column
+intraday_returns$ts <- ymd_hms(intraday_returns$ts)
+
+# Create a date column
+intraday_returns$date <- as.Date(intraday_returns$ts)
+
+# Load the daily returns dataset
+daily_returns <- read_csv("daily_returns.csv")
+```
+
+
+```{r}
+
+# Compute daily realized volatilities
+daily_realized_volatility <- intraday_returns %>%
+  group_by(date) %>%
+  mutate(across(AMZN:QCOM, ~sqrt(.^2), .names = "realized_vol_{.col}")) 
+
+
+# Calculate rolling standard deviation for each stock separately
+daily_returns <- daily_returns %>%
+  mutate(across(AMZN:QCOM, ~rollapplyr(., width = 100, FUN = sd, fill = NA, align = "right"), .names = "rolling_sd_{.col}"))
+
+# Convert data into long format for plotting
+daily_realized_volatility_long <- daily_realized_volatility %>%
+  pivot_longer(cols = starts_with("realized_vol"),
+               names_to = "Ticker",
+               values_to = "Realized_Volatility") %>%
+  mutate(Ticker = str_remove(Ticker, "realized_vol_"))
+
+daily_returns_long <- daily_returns %>%
+  pivot_longer(cols = starts_with("rolling_sd"),
+               names_to = "Ticker",
+               values_to = "Rolling_SD") %>%
+  mutate(Ticker = str_remove(Ticker, "rolling_sd_"))
+
+# Merging the two dataframes
+merged_df <- full_join(daily_realized_volatility_long, daily_returns_long, by = c("date", "Ticker"))
+
+# Plotting
+ggplot(merged_df, aes(x = date)) +
+  geom_line(aes(y = Realized_Volatility, color = "Realized Volatility"), linetype = "solid") +
+  geom_line(aes(y = Rolling_SD, color = "Rolling SD"), linetype = "dashed") +
+  scale_color_manual("", breaks = c("Realized Volatility", "Rolling SD"),
+                     values = c("Realized Volatility" = "black", "Rolling SD" = "blue")) +
+  facet_wrap(~ Ticker, scales = "free_y") +  # separate subplot for each stock
+  labs(title = "Realized Volatility vs 100-day Rolling Standard Deviation",
+       x = "Date",
+       y = "Volatility") +
+  theme_minimal()
+
+
+
+
+```
+
+From figure 1 we note that the RV tend to be more responsive and exhibit higher peaks during periods of market turbulence. Since the RV is calculated on high-frequency data it is more able to capture the intraday price jumps than the rolling SD, which is more smooth (plus the more days you use the smoother it gets). 
+
+Some potential implications for portfolio allocation:
+
+*Pros:*
+
+1. *Better Risk Management:* High-frequency data, like realized volatility, allows for a more detailed view of market conditions. It can help investors detect sudden changes in volatility and adjust their portfolio allocation more swiftly to manage risk.
+
+2. *Improved Portfolio Optimization:* Traditional portfolio theory relies on the assumption that returns are normally distributed and volatility is constant. However, in reality, these assumptions often don't hold. High-frequency data allows investors to model assets' returns more accurately, which can lead to better portfolio optimization.
+
+
+*Cons:*
+
+1. *Microstructure noise:* High-frequency data can contain microstructure noise, such as bid-ask bounce or price discreteness. This can affect volatility and covariance estimates, and thus influence portfolio allocation decisions.
+
+2. *Transaction costs:* High-frequency data may lead to more frequent trading and thus higher transaction costs. This is very important to consider and should be accounted for during portfolio optimization.
+
+
+
+
+
+```{r}
+
+# Group by date and calculate the daily covariance matrix
+daily_cov_list <- intraday_returns %>%
+  group_by(date) %>%
+  do(cov = cov(.[, 2:6])) %>%
+  pull(cov)
+
+# Calculate daily correlation matrix using the covariance matrix
+daily_cor_list <- lapply(daily_cov_list, function(x) {
+  cor_mat <- cov2cor(x)  # convert covariance matrix to correlation matrix
+  cor_mat
+})
+
+# Extract the correlations with AMZN
+cor_with_amzn <- lapply(daily_cor_list, function(x) {
+  x[1, -1]  # Extract correlations for AMZN (skip the correlation with itself)
+})
+
+# Convert the list of correlations into a dataframe with dates as rownames
+cor_with_amzn_df <- data.frame(
+  date = unique(intraday_returns$date),
+  t(matrix(unlist(cor_with_amzn), ncol = length(unique(intraday_returns$date)), byrow = TRUE))
+)
+
+# Set column names for the correlation data frame
+colnames(cor_with_amzn_df)[-1] <- c("GE", "ORCL", "PFE", "QCOM")
+
+# Convert to longer format for plotting
+cor_with_amzn_long <- cor_with_amzn_df %>%
+  pivot_longer(cols = -date,
+               names_to = "Ticker",
+               values_to = "Correlation_AMZN")
+
+# Match ticker names with the column names in intraday_returns
+ticker_names <- c("GE", "ORCL", "PFE", "QCOM")
+cor_with_amzn_long$Ticker <- ticker_names[match(cor_with_amzn_long$Ticker, colnames(cor_with_amzn_df)[-1])]
+
+# Convert date column to actual date format
+cor_with_amzn_long$date <- as.Date(cor_with_amzn_long$date)
+
+# Plotting
+ggplot(cor_with_amzn_long, aes(x = date, y = Correlation_AMZN, color = Ticker)) +
+  geom_line() +
+  scale_color_viridis_d() +  # Use viridis color palette
+  labs(title = "Realized Correlations with AMZN",
+       x = "Date",
+       y = "Correlation") +
+  theme_minimal() +
+  facet_wrap(~ Ticker, nrow = 2)  # Create subplots for each stock
+
+```
+
+Looking at figure 2 we note that the realized correlations between **AMZN** and the other tickers generally tends to be positive. This seems quite reasonable due to them sharing the same market conditions (they're all American) and most of them are also tech stocks (sector dynamics). 
+
+The potential implications of these time-varying correlations for optimal asset allocation include:
+
+1. *Diversification:* In portfolio optimization it's crucial to minimze. If the stocks tend to be highly correlated the benefits of diversification tend to be reduced. When correlations are high, the stocks tend to move together, which means they might all experience losses at the same time, increasing portfolio risk.
+
+2. *Asset allocation:* If the stocks tend to be higher correlated it would imply higher concentrated risk, since the portfolio's assets are moving in sync. Which may require more active risk management and perhaps require a more dynamic asset allocation strategy.
+
+
