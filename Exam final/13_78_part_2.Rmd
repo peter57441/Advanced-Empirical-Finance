@@ -1,0 +1,489 @@
+---
+title: "AEF exam part 2"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-06-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = TRUE)
+```
+
+
+```{r}
+# Loading packages
+
+library(lubridate)
+library(tidyverse)
+library(zoo)
+library(knitr)
+library(gridExtra)
+```
+
+
+\newpage
+
+## Problem 1.1
+
+When using high-frequency data for portfolio allocation decisions with a predefined investment horizon, several empirical challenges and considerations arise. The first challenge that comes to mind is market microstructure noise which refers to the inherent irregularities and disturbances present in financial markets due to the mechanics of trading, order placement, and market participant behavior. It is a form of noise that can impact the observed prices and volume data, making it difficult to accurately analyze and interpret market information.
+
+Another challenge is asynchronous trading which refers to the situation where different assets trade at different times or frequencies. It poses challenges for estimating covariances or correlations between assets for portfolio allocation.
+
+## Problem 1.2
+
+The realized covariance is calculated using high-frequency data, taking the sum of the product of the deviation of returns from their means for two assets, creating a daily covariance matrix. The realized volatility for each asset in a trading day is the square root of the sum of its squared minute log-returns. The rolling-window standard deviation is calculated for daily returns over the last 100 trading days in this context. Here, the daily returns and mean are calculated for the past 100 days aswell. These calculations give our estimator.
+
+```{r}
+# Load the intraday_returns data
+intraday_returns <- read_csv("intraday_returns.csv")
+
+# Convert the ts column to a datetime column
+intraday_returns$ts <- ymd_hms(intraday_returns$ts)
+
+# Create a date column
+intraday_returns$date <- as.Date(intraday_returns$ts)
+
+# Load the daily returns dataset
+daily_returns <- read_csv("daily_returns.csv")
+```
+
+
+```{r}
+
+# Compute daily realized volatilities
+daily_realized_volatility <- intraday_returns |>
+  group_by(date) |>
+  mutate(across(AMZN:QCOM, ~sqrt(.^2), .names = "realized_vol_{.col}")) 
+
+
+# Calculate rolling standard deviation for each stock separately
+daily_returns <- daily_returns |>
+  mutate(across(AMZN:QCOM, ~rollapplyr(., width = 100, FUN = sd, fill = NA, align = "right"), .names = "rolling_sd_{.col}"))
+
+# Convert data into long format for plotting
+daily_realized_volatility_long <- daily_realized_volatility |>
+  pivot_longer(cols = starts_with("realized_vol"),
+               names_to = "Ticker", 
+               values_to = "Realized_Volatility") |>
+  mutate(Ticker = str_remove(Ticker, "realized_vol_"))
+
+daily_returns_long <- daily_returns |>
+  pivot_longer(cols = starts_with("rolling_sd"),
+               names_to = "Ticker",
+               values_to = "Rolling_SD") |>
+  mutate(Ticker = str_remove(Ticker, "rolling_sd_"))
+
+# Merging the two dataframes
+merged_df <- full_join(daily_realized_volatility_long, daily_returns_long, by = c("date", "Ticker"))
+
+# Saving the plot as p1
+p1 <- ggplot(merged_df, aes(x = date)) +
+  geom_line(aes(y = Realized_Volatility, color = "Realized Volatility"), linetype = "solid") +
+  geom_line(aes(y = Rolling_SD, color = "Rolling SD"), linetype = "dashed") +
+  scale_color_manual("", breaks = c("Realized Volatility", "Rolling SD"),
+                     values = c("Realized Volatility" = "black", "Rolling SD" = "blue")) +
+  facet_wrap(~ Ticker, scales = "free_y") +  # separate subplot for each stock
+  labs(title = "Realized Volatility vs 100-day Rolling Standard Deviation",
+       x = "Date",
+       y = "Volatility") +
+  theme_minimal()
+
+
+
+
+```
+
+From figure 1 we note that the RV tend to be more responsive and exhibit higher peaks during periods of market turbulence. Since the RV is calculated on high-frequency data it is more able to capture the intraday price jumps than the rolling SD, which is more smooth.
+
+Utilizing high-frequency data such as realized volatility can offer enhanced risk management by quickly identifying sudden volatility changes and facilitate more precise portfolio optimization by accommodating for non-normal returns. However, it comes with the drawback of potentially incorporating microstructure noise like bid-ask bounce and price granularity. Further, it can instigate frequent trading, thus escalating transaction costs - an essential aspect to account for during portfolio optimization.
+
+## Problem 1.3
+
+
+
+```{r}
+
+# Group by date and calculate the daily covariance matrix
+daily_cov_list <- intraday_returns |>
+  group_by(date) |>
+  do(cov = cov(.[, 2:6])) |>
+  pull(cov)
+
+# Calculate daily correlation matrix using the covariance matrix
+daily_cor_list <- lapply(daily_cov_list, function(x) {
+  cor_mat <- cov2cor(x)  # convert covariance matrix to correlation matrix
+  cor_mat
+})
+
+# Extract the correlations with AMZN
+cor_with_amzn <- lapply(daily_cor_list, function(x) {
+  x[1, -1]  # Extract correlations for AMZN (skip the correlation with itself)
+})
+
+# Convert the list of correlations into a dataframe with dates as rownames
+cor_with_amzn_df <- data.frame(
+  date = unique(intraday_returns$date),
+  t(matrix(unlist(cor_with_amzn), ncol = length(unique(intraday_returns$date)), byrow = TRUE))
+)
+
+# Set column names for the correlation data frame
+colnames(cor_with_amzn_df)[-1] <- c("GE", "ORCL", "PFE", "QCOM")
+
+# Convert to longer format for plotting
+cor_with_amzn_long <- cor_with_amzn_df |>
+  pivot_longer(cols = -date,
+               names_to = "Ticker",
+               values_to = "Correlation_AMZN")
+
+# Match ticker names with the column names in intraday_returns
+ticker_names <- c("GE", "ORCL", "PFE", "QCOM")
+cor_with_amzn_long$Ticker <- ticker_names[match(cor_with_amzn_long$Ticker, colnames(cor_with_amzn_df)[-1])]
+
+# Convert date column to actual date format
+cor_with_amzn_long$date <- as.Date(cor_with_amzn_long$date)
+
+# Saving the plot as p2
+p2 <- ggplot(cor_with_amzn_long, aes(x = date, y = Correlation_AMZN, color = Ticker)) +
+  geom_line() +
+  scale_color_viridis_d() +  # Use viridis color palette
+  labs(title = "Realized Correlations with AMZN",
+       x = "Date",
+       y = "Correlation") +
+  theme_minimal() +
+  facet_wrap(~ Ticker, nrow = 2)  # Create subplots for each stock
+
+```
+
+Looking at figure 1 we note that the realized correlations between **AMZN** and the other tickers generally tends to be positive. This seems quite reasonable due to them sharing the same market conditions (e.g. they're all American) and most of them are also tech stocks (sector dynamics).
+
+Time-varying correlations can significantly impact optimal asset allocation. High correlation between stocks can reduce diversification benefits as synchronized movements could escalate portfolio risk. Moreover, increased correlation signifies concentrated risk, necessitating active risk management and potentially a more dynamic asset allocation strategy to mitigate risk.
+
+```{r echo=FALSE}
+
+#####
+# We encountered issues with kniting the plot leading adobe to crash
+# We thus decided to save the plot and add it back manually in the appendix
+# If you wish to see the plot you should out comment the following below. 
+
+# Create the plot using grid.arrange
+#figure_1 <- grid.arrange(p1, p2, nrow = 1)
+
+# Save and export the figure
+#ggsave("figure_1.png", plot = figure_1, width = 15, height = 5, dpi = 300)
+
+```
+
+
+## Problem 2.1
+
+In the context of a large asset universe, the quantity of parameters within the variance-covariance matrix increases quadratically in proportion to the number of assets. This fact culminates in scenarios where the number of stocks ($N$) is large relative to the number of available historical return observations ($T$) i.e. $N>T$. Such a circumstance introduces considerable estimation error into the resultant covariance matrix, notably affecting the reliability of the extreme coefficients.
+
+This frequently leads to suboptimal estimation of the sample variance-covariance matrix, stemming from the limited degrees of freedom. Under these conditions, it might be advantageous to resort to a biased estimator that imparts structure to the estimates or induces a degree of shrinkage towards a predefined target, thereby enhancing the efficiency of the estimation process. A series of biased estimators for the variance-covariance matrix $\Sigma$, proposed by Ledoit and Wolf, provide solutions to these challenges. These estimators, along with their benefits and implications, will be the focal point of the subsequent sections.
+
+## Problem 2.2
+
+Ledoit and Wolf (2003, 2004) propose a linear shrinkage approach to improve the estimation of the variance-covariance matrix. This addresses challenges in scenarios where there are more assets than observations. The method adjusts extreme coefficients towards the center through a process called "shrinkage". The Ledoit-Wolf estimator is given by a linear combination of the sample covariance matrix, $S$, and the shrinkage target $F$. That is $$\delta F + (1-\delta) S$$Here, $\delta$ represents the shrinkage intensity, which is a scalar lying between 0 and 1. The critical aspect of the Ledoit-Wolf approach is the determination of the shrinkage intensity, $\delta$. The aim is to choose $\delta$ such that the expected loss of the shrinkage estimator, $\hat\Sigma$, is minimized. The authors prove that the optimal value $\delta^*$ asymptotically behaves like a constant over $T$. We call this constant $\kappa$ and derive a consistent estimator of this constant which we call $\hat\kappa$. For more details we refer to Appendix B of Ledoit and Wolf (2003, 2004). We put the pieces together and get the consistent estimator $\hat\kappa$ and finally we can estimate the shrinkage intensity as:$$\delta^* = \max \{ 0, \min\{\frac{\hat\kappa}{T}, 1 \} \}$$One of the many benefits of the Ledoit-Wolf shrinkage estimator is that it remains invertible even when the number of variables exceeds the number of observations. Furthermore, it improves estimation accuracy, particularly when the sample size is small relative to the number of assets. By improving the stability and robustness of the covariance matrix, the shrinkage estimator ultimately enhances portfolio optimization and risk management.
+
+## Problem 2.3
+
+The Fama-French 3-factor model, which includes the market, size, and value factors, can be used as a shrinkage target for the sample variance-covariance matrix. It incorporates prior knowledge about market behavior, reducing estimation error.
+
+To find the optimal shrinkage intensity, or the weight of the structured estimator, cross-validation can be used. This involves splitting the data into training and validation sets, calculating potential shrinkage intensities on the training set, and choosing the intensity that performs best on the validation set. This offers a balance between the bias of the structured estimator and the variance of the sample covariance matrix. Alternatively, an analytical approach to estimate the optimal intensity could be used for efficiency.
+
+
+## Problem 3.1 
+
+
+We're considering the following portfolio maximization problem with quadratic transaction costs, where $\omega_{t+} = \omega_t \circ (1+r_t)/ \iota' (\omega_t \circ (1+r_t))$:
+
+$$\omega^*_{t+1} := \arg \max_{\omega \in R^N, \iota' \omega = 1} \omega' \mu - (\omega-\omega_{t+})B(\omega-\omega_{t+})' - \frac{\gamma}{2} \omega' \Sigma \omega$$
+
+As a result of optimization we achieve the closed form solution:
+
+$$\omega_{t+1}^* = \frac{1}{\gamma} \left(\Sigma^{*-1} - \frac{1}{\iota' \Sigma^{*-1} \iota} \Sigma^{*-1} \iota \iota' \Sigma^{*-1} \right)\mu^* +  \frac{1}{\iota' \Sigma^{*-1} \iota} \Sigma^{*-1} \iota $$
+
+Where $\mu^* := \mu + 2B\omega_{t+}$ and $\Sigma^* := \Sigma + \frac{2B}{\gamma}I_N$. Having transaction costs being proportional with volatility does make sense. Higher volatility often corresponds to higher risk and less liquidity, leading to increased market impact, wider bid-ask spreads, and more resources spent on risk management and information gathering.
+
+## Problem 3.2
+
+```{r}
+# Load the daily returns dataset
+daily_returns <- read_csv("daily_returns.csv")
+
+# Setting B equal to the full sample estimated covariance matrix
+B <- daily_returns |> select(-date) |> cov()
+
+daily_returns <- daily_returns |>
+  select(-date)
+
+n_returns <- ncol(daily_returns)
+
+
+```
+
+We provide the function to compute $\omega_{t+1}^*$ below, which is a modified version from TidyFinance:
+
+```{r echo=TRUE}
+compute_efficient_weight <- function(Sigma,
+                                     mu,
+                                     gamma = 4,
+                                     B = B, # transaction costs from the 
+                                            # full sample covariance matrix
+                                     w_prev = rep(
+                                       1 / ncol(Sigma),
+                                       ncol(Sigma)
+                                     )) {
+  iota <- rep(1, ncol(Sigma))
+  Sigma_processed <- Sigma + ((2*B) / gamma) %*% diag(ncol(Sigma))
+  mu_processed <- mu + (2*B) %*% w_prev
+
+  Sigma_inverse <- solve(Sigma_processed)
+
+  w_mvp <- Sigma_inverse %*% iota
+  w_mvp <- as.vector(w_mvp / sum(w_mvp))
+  w_opt <- w_mvp + 1 / gamma *
+    (Sigma_inverse - w_mvp %*% t(iota) %*% Sigma_inverse) %*%
+      mu_processed
+  return(as.vector(w_opt))
+}
+```
+
+
+## Problem 3.3
+
+We now run a portfolio backtest for the four different strategies propossed in the exam problemset with $\gamma=4$. Since our investor optimize her portfolio based on the covariance-matrix we ignore $\hat{\mu}$ and thus set it to zero for our analysis. We also estimate the parameters on the past 100 trading days.  
+
+
+
+```{r}
+
+compute_ledoit_wolf <- function(x) {
+  # Computes Ledoit-Wolf shrinkage covariance estimator
+  # This function generates the Ledoit-Wolf covariance estimator  as proposed in Ledoit, Wolf 2004 (Honey, I shrunk the sample covariance matrix.)
+  # X is a (t x n) matrix of returns
+  t <- nrow(x)
+  n <- ncol(x)
+  x <- apply(x, 2, function(x) if (is.numeric(x)) # demean x
+    x - mean(x) else x)
+  sample <- (1/t) * (t(x) %*% x)
+  var <- diag(sample)
+  sqrtvar <- sqrt(var)
+  rBar <- (sum(sum(sample/(sqrtvar %*% t(sqrtvar)))) - n)/(n * (n - 1))
+  prior <- rBar * sqrtvar %*% t(sqrtvar)
+  diag(prior) <- var
+  y <- x^2
+  phiMat <- t(y) %*% y/t - 2 * (t(x) %*% x) * sample/t + sample^2
+  phi <- sum(phiMat)
+
+  repmat = function(X, m, n) {
+    X <- as.matrix(X)
+    mx = dim(X)[1]
+    nx = dim(X)[2]
+    matrix(t(matrix(X, mx, nx * n)), mx * m, nx * n, byrow = T)
+  }
+
+  term1 <- (t(x^3) %*% x)/t
+  help <- t(x) %*% x/t
+  helpDiag <- diag(help)
+  term2 <- repmat(helpDiag, 1, n) * sample
+  term3 <- help * repmat(var, 1, n)
+  term4 <- repmat(var, 1, n) * sample
+  thetaMat <- term1 - term2 - term3 + term4
+  diag(thetaMat) <- 0
+  rho <- sum(diag(phiMat)) + rBar * sum(sum(((1/sqrtvar) %*% t(sqrtvar)) * thetaMat))
+
+  gamma <- sum(diag(t(sample - prior) %*% (sample - prior)))
+  kappa <- (phi - rho)/gamma
+  shrinkage <- max(0, min(1, kappa/t))
+  if (is.nan(shrinkage))
+    shrinkage <- 1
+  sigma <- shrinkage * prior + (1 - shrinkage) * sample
+  return(sigma)
+}
+```
+
+
+
+```{r}
+
+# Setting the rolling window to 100 days
+window_length <- 100
+periods <- nrow(daily_returns) - window_length
+
+# Initialising a performance dataframe for each strategy
+
+performance_values <- matrix(NA,
+  nrow = periods,
+  ncol = 3
+)
+
+colnames(performance_values) <- c("raw_return", "turnover", "net_return")
+
+performance_values <- list(
+  "Simple_Sigma" = performance_values,
+  "LW_Sigma" = performance_values,
+  "RV" = performance_values,
+  "Naive" = performance_values
+)
+
+# Setting the initial weights of each strategy equal to the naive weights 
+
+w_prev_1 <- w_prev_2 <- w_prev_3 <- w_prev_4 <- rep(
+  1 / n_returns,
+  n_returns
+)
+
+```
+
+```{r}
+
+# Function to adjust weights based on next return
+adjust_weights <- function(w, next_return) {
+  w_prev <- 1 + w * next_return  # Adjust weights based on next return
+  as.numeric(w_prev / sum(as.vector(w_prev)))  # Normalize adjusted weights to sum up to 1
+}
+
+# Function to evaluate performance metrics
+evaluate_performance <- function(w, w_previous, next_return, B) {
+  raw_return <- as.matrix(next_return) %*% w  # Calculate raw return
+  tc <- t(w - w_previous) %*% B %*% (w - w_previous)  # Calculate transaction costs
+  net_return <- raw_return - tc  # Calculate net return
+  turnover <- sum(abs(w - w_previous))  # Calculate turnover
+  c(raw_return, turnover, net_return)  # Return vector of performance metrics
+}
+
+
+
+```
+
+
+```{r}
+
+# Setting gamma to 4
+
+gamma <- 4
+
+# Calculating portfolio weights and performance metrics for each strategy in each period
+
+for (p in 1:periods) {
+  returns_window <- daily_returns[p:(p + window_length - 1), ]
+  next_return <- daily_returns[p + window_length, ] |> as.matrix()
+
+  # Calculating the parameters used for the efficient weights based on the rolling windows
+  Sigma <- cov(returns_window)
+  mu <- 0 * colMeans(returns_window) # In this example we ignore mu in the portfolio optimization problem thus we set it to zero.
+  LW_Sigma <- compute_ledoit_wolf(returns_window)
+  squared_returns <- returns_window^2
+  RV_Sigma <- cov(squared_returns)
+  
+  # We compute the efficient weights for each strategy below
+
+  # Simple_Sigma
+  w_1 <- compute_efficient_weight(
+    mu = mu,
+    Sigma = Sigma,
+    B = B,
+    gamma = gamma,
+    w_prev = w_prev_1
+  )
+
+  performance_values[[1]][p, ] <- evaluate_performance(w_1,
+    w_prev_1,
+    next_return,
+    B = B
+  )
+
+  w_prev_1 <- adjust_weights(w_1, next_return)
+  
+  # LW_Sigma
+  
+  w_2 <- compute_efficient_weight(
+    mu = mu,
+    Sigma = LW_Sigma,
+    B = B,
+    gamma = gamma,
+    w_prev = w_prev_2
+  )
+
+  performance_values[[2]][p, ] <- evaluate_performance(w_2,
+    w_prev_2,
+    next_return,
+    B = B
+  )
+  
+  w_prev_2 <- adjust_weights(w_2, next_return)
+
+  # Realized Volatility
+  w_3 <- compute_efficient_weight(
+    mu = mu,
+    Sigma = RV_Sigma,
+    B = B,
+    gamma = gamma,
+    w_prev = w_prev_3
+  )
+
+  performance_values[[3]][p, ] <- evaluate_performance(
+    w_3,
+    w_prev_3,
+    next_return,
+    B = B
+  )
+
+  w_prev_3 <- adjust_weights(w_3, next_return)
+  
+  # Naive portfolio
+  w_4 <- rep(1 / n_returns, n_returns)
+
+  performance_values[[4]][p, ] <- evaluate_performance(
+    w_4,
+    w_prev_4,
+    next_return,
+    B = B
+  )
+
+  w_prev_4 <- adjust_weights(w_4, next_return)
+  
+  
+}
+
+
+```
+
+
+```{r}
+# We making the summary table for the portfolio backtesting based on performance after transaction costs
+
+performance <- lapply(performance_values, as_tibble) |>
+  bind_rows(.id = "strategy")
+
+# assuming 252 trading days per year
+table_1 <- performance |>
+  group_by(strategy) |>
+  summarize(
+    real_ann_avg_returns = round(252 * mean(100 * net_return), 3),
+    ann_SD = round(sqrt(252) * sd(100 * net_return), 3),
+    `Sharpe ratio` = round(real_ann_avg_returns / ann_SD, 3),
+    Turnover = round(100 * mean(turnover), 1)
+  )
+
+kable(table_1, format = "markdown", align = c("l", "c", "c", "c", "c"), col.names = c("Strategy", "real_ann_avg_returns", "ann_SD", "Sharpe ratio", "Turnover"), caption = "Strategy perfomance")
+
+```
+
+From table 1 we note that the naive PF achieves the highest Sharpe-Ratio. Which might be due to it also having the lowest turnover (and thus the lowest transaction costs). However we do note that the other strategies achieves lower standard deviation, due to them trying to minimze this in their optimizations.
+
+\newpage
+
+# Appendix
+
+![Figures to problem 1](figure_1.png)
+
+
+
+
+
+
+
+
+
