@@ -22,11 +22,22 @@ library(zoo)
 
 ## 1.1
 
+When using high-frequency data for portfolio allocation decisions with a predefined investment horizon, several empirical challenges and considerations arise. The first challenge that comes to mind is market microstructure noise which refers to the inherent irregularities and disturbances present in financial markets due to the mechanics of trading, order placement, and market participant behavior. It is a form of noise that can impact the observed prices and volume data, making it difficult to accurately analyze and interpret market information. We can only observe $$Y_{i\Delta n} = X_{i\Delta n} + U_{i\Delta n}$$
+Where $Y_{i\Delta n}$ is the observed transaction prices, $X_{i\Delta n}$ is the efficient latent price and $U_{i\Delta n}$ is the white noise which captures the market microstructure frictions. Understanding and managing this noise is crucial when using such data for portfolio allocation decisions.
+
+Here are some key considerations:
+
+Bid-Ask Bounce: In many markets, investors cannot trade at a single "market price." Instead, there are two prices: the bid price (the highest price a buyer is willing to pay) and the ask price (the lowest price a seller is willing to accept). As trades occur at both the bid and ask prices, the observed price series can bounce back and forth between the two, creating noise.
+
+Nonsynchronous Trading: Different assets trade at different times, which can create apparent but spurious price changes in high-frequency data. For instance, if one asset trades a second before another, and the market moves within that second, it can create the illusion of a price change that isn't reflective of true asset value change.
+
+To address market microstructure noise, researchers have developed several techniques to combat market microstructure noise. One of them is kernel regression, which is a method that can smooth out high-frequency returns and help manage the bid-ask bounce and similar types of noise.
+
 ## 1.2
 
 The realized covariance is a measure that allows us to estimate the covariance of two assets' returns using high-frequency data. Given the availability of minute-level data, the realized covariance within a trading day can be calculated as follows:
 
-$$\mathrm{Cov}(i,j) = \sum \left( r_{i,t} - \hat{\mu}_i \right) \cdot \left( r_{j,t} - \hat{\mu}_j \right) $$
+$$Cov(i,j) = \sum \left( r_{i,t} - \hat{\mu}_i \right) \cdot \left( r_{j,t} - \hat{\mu}_j \right) $$
 Where $r_{i,t}$ and $r_{j,t}$ are the returns of asset $i$ and $j$ respectively at minute $t$ of the day. $\hat{\mu}_i$ and $\hat{\mu}_j$ are the mean of the returns for stock $i$ and $j$ within a trading day. This gives a daily realized covariance matrix, with each element being the realized covariance between two assets calculated as above.
 
 The realized volatility for asset $i$ in a trading day is given by: 
@@ -117,7 +128,7 @@ Some potential implications for portfolio allocation:
 
 2. *Transaction costs:* High-frequency data may lead to more frequent trading and thus higher transaction costs. This is very important to consider and should be accounted for during portfolio optimization.
 
-
+## 1.3
 
 
 
@@ -181,5 +192,133 @@ The potential implications of these time-varying correlations for optimal asset 
 1. *Diversification:* In portfolio optimization it's crucial to minimze. If the stocks tend to be highly correlated the benefits of diversification tend to be reduced. When correlations are high, the stocks tend to move together, which means they might all experience losses at the same time, increasing portfolio risk.
 
 2. *Asset allocation:* If the stocks tend to be higher correlated it would imply higher concentrated risk, since the portfolio's assets are moving in sync. Which may require more active risk management and perhaps require a more dynamic asset allocation strategy.
+
+# Excercise 2
+
+# Exercise 2.1
+
+In the context of a large asset universe, the quantity of parameters within the variance-covariance matrix increases quadratically in proportion to the number of assets. This fact culminates in scenarios where the number of stocks ($N$) is large relative to the number of available historical return observations ($T$) i.e. $N>T$. Such a circumstance introduces considerable estimation error into the resultant covariance matrix, notably affecting the reliability of the extreme coefficients.
+
+It is commonplace for portfolio optimization algorithms to place substantial emphasis on these coefficients. Despite their inherent unreliability, these coefficients often form the foundation for sizable investment decisions. Consequently, the realized track records of managers may inadequately represent their true stock-picking capabilities, a distortion attributable to estimation error.
+
+This frequently leads to suboptimal estimation of the sample variance-covariance matrix, stemming from the limited degrees of freedom. Under these conditions, it might be advantageous to resort to a biased estimator that imparts structure to the estimates or induces a degree of shrinkage towards a predefined target, thereby enhancing the efficiency of the estimation process. Such an estimator can effectively reduce the mean squared error (MSE), a metric encompassing both bias and variance, which consequently leads to more consistent and trustworthy estimates. A series of biased estimators for the variance-covariance matrix $\Sigma$, proposed by Ledoit and Wolf, provide solutions to these challenges. These estimators, along with their benefits and implications, will be the focal point of the subsequent sections.
+
+# Exercise 2.2
+
+Ledoit and Wolf (2003, 2004) propose a linear shrinkage approach to improve the estimation of the variance-covariance matrix, denoted as $\Sigma$. This is to tackle the challenges of estimating the variance-covariance matrix, especially in scenarios where the number of variables (assets) is large compared to the number of observations (time periods). Their method introduces a shrinkage towards a structured estimator incorporating prior information about the covariance matrix.
+
+The method suggests that coefficients estimated to be extremely high are likely to contain substantial positive error and therefore need to be pulled downwards. Conversely, those coefficients estimated to be extremely low are believed to harbor significant negative error and therefore require upward adjustment. This process of adjusting extreme estimates towards the center is referred to as "shrinkage".
+
+Ledoit and Wolf's approach to estimating the variance-covariance matrix, $\Sigma$, employs a shrinkage principle, which is a compromise between two types of estimators: one with no structure (the sample covariance matrix $S$) and another with a high degree of structure ($F$), such as the single-factor model by Sharpe (1963).
+
+The Ledoit-Wolf estimator is given by a linear combination of the sample covariance matrix, $S$, and the hoghly structured estimator $F$. That is,
+
+$$\delta F + (1-\delta) S$$
+
+Here, $\delta$ represents the shrinkage intensity, which is a scalar lying between 0 and 1. This linear combination is the so-called shrinkage estimator. If $\delta = 0$, the estimator equals the sample covariance matrix, $S$. If $\delta = 1$, the estimator equals the highly structured estimator, $F$. For $0 < \delta < 1$, the shrinkage estimator is a compromise between the sample covariance matrix and the target.
+
+The critical aspect of the Ledoit-Wolf approach is the determination of the shrinkage intensity, $\delta$. The aim is to choose $\delta$ such that the expected quadratic loss of the shrinkage estimator, $\hat\Sigma$, is minimized. This loss is defined as the expected squared Frobenius norm of the difference between the true covariance matrix, $\Sigma$, and its estimate, $\hat\Sigma$. That is:
+
+$$R(\delta) = E(L(\delta)) = E(||\delta F + (1-\delta) S - \Sigma ||^2)$$ The authors prove that the optimal value $\delta^*$ asymptotically behaves like a constant over $T$. We call this constant $\kappa$ and define it as:
+
+$$\kappa = \frac{\pi -\rho}{\gamma}$$
+
+Here $\pi$ denotes the sum of asymptotic variances of the entries of $S$. Similarly, $\rho$ denotes the sum of asymptotic covariances of the entries of $F$ with the entries of $S$. Finally we have that $\gamma$ measures the misspecification of the true shrinkage target.
+
+If we already knew $\kappa$ we could use $\kappa/T$ as the shrinkage intensity - but we do not know $\kappa$ so we find the consistent estimator of $\kappa$. This is done by deriving the consisting estimators for the three measures $\pi$, $\rho$ and $\gamma$. For me details we refer to Appendix B of Ledoit and Wolf (2003, 2004).
+
+We put the pieces together and get the consistent estimator $\hat\kappa$ and finally we can estimate the shrinkage intensity as:
+
+$$\delta^* = max \{ 0, min\{\frac{\hat\kappa}{T}, 1 \} \}$$
+
+One of the many benefits of the Ledoit-Wolf shrinkage estimator is that it remains invertible even when the number of variables exceeds the number of observations. Furthermore, it improves estimation accuracy, particularly when the sample size is small relative to the number of assets.
+
+This method provides a systematic, data-driven approach for portfolio managers to deal with estimation uncertainty when deriving the covariance matrix, a crucial input for portfolio selection. By improving the stability and robustness of the covariance matrix, the shrinkage estimator ultimately enhances portfolio optimization and risk management.
+
+# Exercise 2.3
+
+In the context of the shrinkage target in Ledoit and Wolf's approach, the Fama-French 3-factor model could provide a highly structured estimator (F) for the shrinkage process. The rationale behind using the Fama-French 3-factor model as a structured estimator comes from its success in explaining stock returns and its wide acceptance in academic research and financial industry. Given the fact that the Fama-French 3-factor model is a factor model, it could serve to provide the structured bias needed to improve the estimate of the sample variance-covariance matrix.
+
+To determine the shrinkage intensity (the value of $\delta$), a data-driven selection criterion based on cross-validation could be employed. Here is a proposed procedure:
+
+-   Split the dataset into a training set and a validation set. The training set is used to estimate the parameters of the model, and the validation set is used to test the performance of the model.
+
+-   For a range of potential shrinkage intensities (values of $\delta$ from 0 to 1), apply the shrinkage estimator to the training data to obtain an estimated variance-covariance matrix.
+
+-   Use this estimated variance-covariance matrix to construct portfolios and evaluate their out-of-sample performance on the validation set. This could be based on various metrics such as Sharpe ratio, mean return, or mean-variance efficiency.
+
+-   Choose the value of $\delta$ that yields the best out-of-sample performance as the shrinkage intensity.
+
+This process of cross-validation allows the model to select a shrinkage intensity that performs well out-of-sample, thus helping to avoid overfitting to the training data and increasing the generalizability of the model.
+
+However, keep in mind that this approach is simplified and may not account for all the complexities involved in estimating a covariance matrix for large portfolios or the intricacies of the Fama-French 3-factor model. Additionally, the model's assumptions, including the choice of factors and the linear relationship between returns and factors, should be carefully examined.
+
+# Excercise 3
+
+## 3.1 
+
+
+We're considering the following portfolio maximization problem with quadratic transaction costs:
+
+Where $\omega_{t+} = \omega_t \circ (1+r_t)/ \iota' (\omega_t \circ (1+r_t))$.
+
+$$\omega^*_{t+1} := \arg \max_{\omega \in R^N, \iota' \omega = 1} \omega' \mu - (\omega-\omega_{t+})B(\omega-\omega_{t+})' - \frac{\gamma}{2} \omega' \Sigma \omega$$
+
+As a result of optimization we achieve the closed form solution:
+
+$$\omega_{t+1}^* = \frac{1}{\gamma} \left(\Sigma^{*-1} - \frac{1}{\iota' \Sigma^{*-1} \iota} \Sigma^{*-1} \iota \iota' \Sigma^{*-1} \right)\mu^* +  \frac{1}{\iota' \Sigma^{*-1} \iota} \Sigma^{*-1} \iota $$
+
+Where $\mu^* := \mu + 2B\omega_{t+}$ and $\Sigma^* := \Sigma + \frac{2B}{\gamma}I_N$. Having transaction costs being proportional with volatility does make sense. Higher volatility often corresponds to higher risk and less liquidity, leading to increased market impact, wider bid-ask spreads, and more resources spent on risk management and information gathering.
+
+## 3.2
+
+```{r}
+# Load the daily returns dataset
+daily_returns <- read_csv("daily_returns.csv")
+
+# Setting B equal to the full sample estimated covariance matrix
+B <- daily_returns |> select(-date) |> cov()
+```
+
+We provide the function to compute $\omega_{t+1}^*$ below:
+
+```{r}
+compute_efficient_weight <- function(Sigma,
+                                     mu,
+                                     gamma = 2,
+                                     B = B, # transaction costs from the full sample covariance matrix
+                                     w_prev = rep(
+                                       1 / ncol(Sigma),
+                                       ncol(Sigma)
+                                     )) {
+  iota <- rep(1, ncol(Sigma))
+  Sigma_processed <- Sigma + (2*B) / gamma * diag(ncol(Sigma))
+  mu_processed <- mu + (2*B) * w_prev
+
+  Sigma_inverse <- solve(Sigma_processed)
+
+  w_mvp <- Sigma_inverse %*% iota
+  w_mvp <- as.vector(w_mvp / sum(w_mvp))
+  w_opt <- w_mvp + 1 / gamma *
+    (Sigma_inverse - w_mvp %*% t(iota) %*% Sigma_inverse) %*%
+      mu_processed
+  return(as.vector(w_opt))
+}
+```
+
+
+```{r}
+# Backtest for rolling variance-covariance matrix
+
+
+
+
+
+```
+
+
+
+
+
 
 
